@@ -20,14 +20,15 @@ You cannot "see" the live window, so use the headless screenshot mode and look a
 
 ```bash
 .build/release/OpenWorld --shot shots/x.png \
-  [--pos X Z] [--yaw RAD] [--pitch RAD] [--dist D] [--time T] [--size W H]
+  [--pos X Z] [--yaw RAD] [--pitch RAD] [--dist D] [--time T] [--hour H] [--walk] [--size W H]
 ```
 
 - Runs 90 simulation steps (so physics/camera settle), then renders a single 4x-MSAA frame offscreen. Default 1920x1080.
-- `--pos` places the player on the terrain at (X, Z). `--yaw` is camera orbit angle (0 = camera on +Z side looking toward -Z; pi = the default spawn view). `--time` sets the animation clock (water/clouds).
+- `--pos` places the player on the terrain at (X, Z). `--yaw` is camera orbit angle (0 = camera on +Z side looking toward -Z; pi = the default spawn view). `--time` sets the animation clock (water/clouds); `--hour` (0-24, default 12) moves the sun, which also moves the cloud shadows.
+- `--walk` holds forward for the simulated frames. Use it for anything that only happens while moving — test candidate: a swimming wake, `--pos 62 62 --yaw 0.9 --pitch 0.32 --dist 9 --walk`.
 - Several shots can run in parallel (`&` then `wait`).
 - Don't place test positions inside building footprints (see `World.buildProps` specs, plaza centre is (-18, 22)); the camera collision will pull in to its 1.5 minimum and you'll get a useless close-up.
-- Use `Read` on the PNG to inspect it. Good standard views: spawn (default), a beach (`--pos -50 40 --yaw 1.9 --pitch 0.22 --dist 10`), and an overview (`--pos -18 5 --yaw 0.5 --pitch 0.85 --dist 90`).
+- Use `Read` on the PNG to inspect it. Good standard views: spawn (default), a beach (`--pos -50 40 --yaw 1.9 --pitch 0.10 --dist 9`), an overview (`--pos 40 -30 --yaw 2.6 --pitch 0.55 --dist 110`), the plaza (`--pos -18 40 --yaw 3.14 --pitch 0.22 --dist 22`), underwater (`--pos 62 62 --yaw 0.9 --pitch -0.28 --dist 5`).
 - `shots/` holds reference renders from the initial version.
 
 Live input (keyboard, mouse capture, gamepad) is **not** covered by the headless path and has only been smoke-tested (app launches and stays up). If you change input code, say clearly that it is unverified, or ask the user to try it.
@@ -40,9 +41,10 @@ All code is in `Sources/OpenWorld/`:
 |---|---|
 | `main.swift` | Entry point. `--shot` headless mode, otherwise starts `NSApplication` + `AppDelegate`. |
 | `AppDelegate.swift` | Window, menu (Quit, Toggle Full Screen), and `GameView` (an `MTKView` subclass that turns key/mouse events into `Input` state, handles mouse capture). |
-| `Game.swift` | `Input` state, `Key` codes, `Game`: player physics (gravity, jump, swim buoyancy, terrain snap), obstacle push-out, orbit camera with collision, gamepad via `GameController`. No rendering. |
+| `Game.swift` | `Input` state, `Key` codes, `Game`: player physics (gravity, jump, swim buoyancy, terrain snap), obstacle push-out, orbit camera with collision, gamepad via `GameController`. Spawns water spray. No rendering. |
+| `Particles.swift` | `Particle` and `ParticleSystem`: a CPU pool of billboarded foam and droplets, integrated in `Game.update`. |
 | `World.swift` | Procedural terrain `height(x,z)` + `normal`, terrain mesh, height texture for the water shader, props (palms, bushes, flowers, houses, tower) and the `Obstacle` list. |
-| `MeshBuilder.swift` | `Vertex` struct and CPU mesh helpers (quad, box, pyramid, frustum, sphere, palm tree). |
+| `MeshBuilder.swift` | `Vertex` struct and CPU mesh helpers (quad, `quad4`, box, `groundedBox`, pyramid, frustum, sphere, palm tree). |
 | `Renderer.swift` | Metal setup, pipelines, frame encode (shadow map -> HDR scene -> bloom -> composite), player drawing from sphere parts, headless `renderPNG`. Also the `MTKViewDelegate`. |
 | `Shaders.swift` | All MSL as one Swift raw string, compiled at launch via `makeLibrary(source:)`. |
 | `MathUtil.swift` | `V2/V3/V4/M4` aliases, matrix helpers (Metal 0...1 depth, right-handed), `lerp`, `sstep`, `RNG`. |
@@ -52,7 +54,8 @@ All code is in `Sources/OpenWorld/`:
 1. Shadow map (`encodeShadowMap`): depth-only render from the sun into a 4096² `depth32Float`, orthographic ±160.
 2. Scene (`encodeScene`) into the MSAA HDR target (`rgba16Float`), resolved: sky (fullscreen triangle at far plane, depth test off, view ray via `invViewProj`), opaque (terrain, props, player parts, `vs_main`/`fs_main`), water (camera-centred grid, alpha blended, depth-tested, no depth write, no shadows).
 3. Bloom: bright pass at half res (threshold 1.0, knee 0.5) -> two ping-pong 9-tap separable blurs.
-4. Composite: scene + 0.30 * bloom -> highlight-only soft-knee tone curve -> drawable.
+4. Particles (`encodeParticles`): the CPU pool is rebuilt as camera-facing quads into one dynamic buffer and drawn after the water, depth-tested, no depth write. Skipped while the camera is submerged, because the water plane is opaque from below but writes no depth.
+5. Composite: scene + 0.30 * bloom -> highlight-only soft-knee tone curve -> drawable.
 
 ## Conventions and gotchas
 
@@ -62,8 +65,11 @@ All code is in `Sources/OpenWorld/`:
 - **Terrain is flagged by vertex alpha = 0.5** (props/characters use 1.0). `fs_main` uses `col.a < 0.75` to add ground detail and the plaza checker pattern (analytic, from `PLAZA`/`PLAZA_R` constants injected into the shader source from `World`). Ground detail only *modulates* the vertex colour — `World.buildTerrain` owns the sand/grass/rock blend, so re-deriving those masks in the shader double-blends them. Detail octaves fade through `aaNoise` keyed on `max(fwidth(p).x, fwidth(p).y)`; summing the two axes over-fades on flat ground seen obliquely.
 - **World constants are shared with the shader** through string interpolation in `Shaders.swift` (`World.extent`, `plazaCenter`, `plazaRadius`). If you change them, the height texture and shader stay in sync automatically; don't hard-code duplicates.
 - **Height is analytic and CPU-side**: `World.height(x,z)` is the single source of truth for terrain mesh, normals, water-depth texture, placement, player physics, and camera collision. Keep it deterministic and cheap.
+- **Cloud shadows and the sky share one field.** `cloudField(xz, time)` is a noise field on a plane at `CLOUD_H` (260). `fs_sky` intersects it along the view ray, `fs_main` projects it along the sun (`cloudShade`), so a shadow crossing the island belongs to the cloud above it. Change the frequency or the drift in `cloudField` and both follow.
+- **The sun comes from `Renderer.sun(hour:)`.** `--hour` moves it along an arc that passes exactly through the original key light at 12:00; the light colour rides in `Frame.sunCol` (there is no `SUNCOL` constant any more). Anything that tints sunlit surfaces must use `f.sunCol.rgb`, or a sunset will keep white highlights.
 - **Underwater is a shader state, not a separate pass.** Everything is driven by `uwAmount(camY)` (0 above, 1 below, crossfaded over `+0.30 .. -0.10`). `applyFog`, `fs_sky` and `fs_water` all branch on it, and everything decays to the single constant `UWFOG` — do not give the underwater fog a height-dependent target colour, or the distant seabed and distant surface converge to different colours and the far waterline draws a hard dark bar. `Game.updateCamera` only lets the camera drop below the surface while `swimming`; on land it is clamped above the waterline.
 - Water level is y = 0, seabed is -4, swimming rest height is `Game.swimY` (-0.8). Terrain mesh covers +/-120; players are clamped to radius 104.
+- **Building walls are baked with a contact shadow.** `MeshBuilder.groundedBox` emits each wall as three vertical bands (below ground, an AO ramp, plain wall) using `quad4` per-corner colours, because there is no SSAO. Plain `box` has no such ramp — use `groundedBox` for anything that stands on the terrain.
 - Water grid vertices are in a quadratic radial layout centred on the camera (fine near, coarse far). Vertex wave amplitude is deliberately small because vertices move with the camera; fine detail comes from fragment normals.
 - Colors are authored directly in display space (framebuffer is `bgra8Unorm`, no gamma handling). Keep that consistent.
 - **Shadow mapping gotchas.** `sunDir` points *towards* the sun, so the light camera must sit at `+sunDir * 300`; `-sunDir` puts it under the island and shadows silently vanish. Sample the depth map with `sample_compare` (a `depth2d<float>` and a compare-function sampler), remap light clip space as `uv = (x*0.5+0.5, 0.5-y*0.5)`, and use clip `z/w` directly as the depth (Metal depth is already 0...1, don't rescale it).

@@ -174,7 +174,8 @@ enum World {
             let baseY = corners.max()!
             let lowY = corners.min()! - 4
             let topY = baseY + s.h
-            b.box(min: V3(x0, lowY, z0), max: V3(x1, topY, z1), color: s.wall)
+            b.groundedBox(min: V3(x0, lowY, z0), max: V3(x1, topY, z1),
+                          color: s.wall, groundY: (corners.min()! + baseY) * 0.5)
             b.pyramid(center: V3(cx, topY, cz), hx: s.w / 2 + 0.7, hz: s.d / 2 + 0.7, height: 3.2, color: s.roof)
 
             func attach(_ onX: Bool, _ sign: Float, _ along: Float, _ y0: Float, _ y1: Float, _ width: Float, _ color: V3) {
@@ -207,6 +208,27 @@ enum World {
         b.frustum(base: tb + V3(0, 10.5, 0), r0: 2.3, r1: 2.3, height: 1.4, sides: 20, color: V3(0.9, 0.5, 0.25))
         b.frustum(base: tb + V3(0, 12, 0), r0: 2.5, r1: 0.05, height: 5, sides: 20, color: V3(0.85, 0.25, 0.25))
         obstacles.append(Obstacle(center: tc, half: V2(2.3, 2.3), round: true, topY: plazaHeight + 17))
+
+        // Stone kerb: gives the tile floor a deliberate edge instead of
+        // letting the grass cut it off mid-checker.
+        let ky0 = plazaHeight - 0.10, ky1 = plazaHeight + 0.22
+        let ki = plazaRadius - 0.42, ko = plazaRadius + 0.06
+        let kerbCol = V3(1.0, 0.95, 0.84)
+        let segs = 72
+        func kpt(_ r: Float, _ a: Float, _ y: Float) -> V3 {
+            V3(plazaCenter.x + cos(a) * r, y, plazaCenter.y + sin(a) * r)
+        }
+        for i in 0..<segs {
+            let a0 = Float(i) / Float(segs) * 2 * Float.pi
+            let a1 = Float(i + 1) / Float(segs) * 2 * Float.pi
+            let ti = kpt(ki, a1, ky0) - kpt(ki, a0, ky0)
+            let to = kpt(ko, a1, ky0) - kpt(ko, a0, ky0)
+            let up = V3(0, ky1 - ky0, 0)
+            let radial = kpt(ko, a0, ky0) - kpt(ki, a0, ky0)
+            b.quad(origin: kpt(ki, a0, ky1), u: ti, v: radial, color: kerbCol * 1.10)
+            b.quad(origin: kpt(ko, a0, ky0), u: up, v: to, color: kerbCol)
+            b.quad(origin: kpt(ki, a0, ky0), u: ti, v: up, color: kerbCol * 0.88)
+        }
 
         return (b, obstacles)
     }

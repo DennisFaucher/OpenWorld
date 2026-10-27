@@ -50,6 +50,8 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--pitch RAD` | Camera elevation |
 | `--dist D` | Camera distance |
 | `--time T` | Animation clock, for the water and clouds |
+| `--hour H` | Time of day, `0`–`24`; `12` (the default) is the original key light |
+| `--walk` | Hold forward for the simulated frames, so wakes and splashes can be checked |
 | `--size W H` | Output resolution, default 1920x1080 |
 
 It runs 90 simulation steps first so physics and the camera settle, then renders one 4x-MSAA frame offscreen.
@@ -57,16 +59,19 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 ## What's in it
 
 - **Terrain.** An analytic height function (`World.height`) — value-noise fbm warped into an island profile — sampled into a 240x240 mesh. Sand, grass and rock are blended per vertex by height and slope, with fragment-space detail layered underneath that fades out before it can alias.
-- **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, and animated foam along the shoreline.
+- **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, refracted shoreline, and animated foam along the shore. Swimming and wading leave foam and spray behind.
 - **Underwater.** Absorption fog, caustics on submerged surfaces, and the surface seen from below with the Snell window and total internal reflection.
+- **Sky and time of day.** One cloud layer at a fixed altitude, drawn both by the sky (where the view ray meets it) and by shading (projected along the sun), so drifting cloud shadows cross the island under the clouds that cast them. `--hour` swings the sun across the sky, warming and dimming as it drops.
 - **Props.** Palms, bushes, flowers, houses and a tower, all built from the same handful of mesh primitives, with collision shapes for the camera and the player.
 - **Character.** An original design assembled from spheres, with a walk cycle, jumping, wading and swimming.
-- **Lighting.** A 4096x4096 directional shadow map with hardware PCF, plus HDR rendering with bloom and a highlight-only tone curve.
+- **Lighting.** A 4096x4096 directional shadow map with hardware PCF, hemispheric ambient with a baked contact shadow where walls meet the ground, plus HDR rendering with bloom and a highlight-only tone curve.
 - **Camera.** Orbit with collision against terrain and props.
 
 ![Walking the beach](docs/beach.jpg)
 
 ![On the plaza at spawn](docs/spawn.jpg)
+
+![Late afternoon](docs/dusk.jpg)
 
 ![Under the surface](docs/underwater.jpg)
 
@@ -79,6 +84,7 @@ All code lives in `Sources/OpenWorld/`:
 | `main.swift` | Entry point; `--shot` headless mode, otherwise starts `NSApplication` |
 | `AppDelegate.swift` | Window, menu, and the `MTKView` that turns key/mouse events into input state |
 | `Game.swift` | Player physics, swimming, obstacle push-out, orbit camera with collision, gamepad |
+| `Particles.swift` | CPU particle pool for wakes, splashes and spray |
 | `World.swift` | Terrain height and normals, terrain mesh, height texture, props, obstacles |
 | `MeshBuilder.swift` | CPU mesh primitives: quad, box, pyramid, frustum, sphere, palm |
 | `Renderer.swift` | Metal setup, render passes, bloom chain, headless PNG output |
@@ -89,7 +95,7 @@ All code lives in `Sources/OpenWorld/`:
 
 ## Status
 
-Early prototype, `v0.1`. The look-and-feel milestone is mostly complete: terrain detail, water, shadows, bloom, and the underwater view. Next up is character movement feel and animation, then creature and world content.
+Early prototype, `v0.1`. The look-and-feel milestone is complete: terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows and a time-of-day parameter. Next up is character movement feel and animation, then creature and world content.
 
 The repository is not a complete game — there is no goal, no saving, and no audio.
 

@@ -52,6 +52,42 @@ final class MeshBuilder {
         quad(origin: V3(hi.x, lo.y, lo.z), u: V3(-d.x, 0, 0), v: V3(0, d.y, 0), color: color)
     }
 
+    /// Quad with per-corner colours, ordered `origin`, `+u`, `+u+v`, `+v`.
+    func quad4(origin: V3, u: V3, v: V3, c0: V3, c1: V3, c2: V3, c3: V3) {
+        let n = normalize(cross(u, v))
+        let a = add(origin, n, c0)
+        let b = add(origin + u, n, c1)
+        let c = add(origin + u + v, n, c2)
+        let d = add(origin + v, n, c3)
+        tri(a, b, c)
+        tri(a, c, d)
+    }
+
+    /// Box whose four vertical faces darken towards `groundY`. There is no SSAO,
+    /// so this bakes the contact shadow into the wall: without it buildings read
+    /// as cardboard standing on the grass.
+    func groundedBox(min lo: V3, max hi: V3, color: V3, groundY: Float,
+                     aoDepth: Float = 2.4, aoStrength: Float = 0.30) {
+        let d = hi - lo
+        let dark = color * (1 - aoStrength)
+        let baseY = min(max(groundY, lo.y), hi.y)
+        let midY = min(baseY + aoDepth, hi.y)
+        quad(origin: V3(lo.x, hi.y, hi.z), u: V3(d.x, 0, 0), v: V3(0, 0, -d.z), color: color * 1.05)
+        quad(origin: V3(lo.x, lo.y, lo.z), u: V3(d.x, 0, 0), v: V3(0, 0, d.z), color: color * 0.6)
+        let sides: [(V3, V3)] = [
+            (V3(hi.x, 0, hi.z), V3(0, 0, -d.z)), (V3(lo.x, 0, lo.z), V3(0, 0, d.z)),
+            (V3(lo.x, 0, hi.z), V3(d.x, 0, 0)), (V3(hi.x, 0, lo.z), V3(-d.x, 0, 0)),
+        ]
+        for (o, u) in sides {
+            if baseY > lo.y { quad(origin: V3(o.x, lo.y, o.z), u: u, v: V3(0, baseY - lo.y, 0), color: dark) }
+            if midY > baseY {
+                quad4(origin: V3(o.x, baseY, o.z), u: u, v: V3(0, midY - baseY, 0),
+                      c0: dark, c1: dark, c2: color, c3: color)
+            }
+            if hi.y > midY { quad(origin: V3(o.x, midY, o.z), u: u, v: V3(0, hi.y - midY, 0), color: color) }
+        }
+    }
+
     /// Four-sided hip roof.
     func pyramid(center: V3, hx: Float, hz: Float, height: Float, color: V3) {
         let apex = center + V3(0, height, 0)

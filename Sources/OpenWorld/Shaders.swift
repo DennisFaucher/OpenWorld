@@ -11,13 +11,14 @@ enum Shaders {
 
     constant float3 HORIZON = float3(0.80, 0.94, 1.0);
     constant float3 ZENITH = float3(0.10, 0.44, 0.93);
-    constant float3 SUNCOL = float3(1.0, 0.95, 0.80);
+    constant float CLOUD_H = 260.0;
 
     struct Frame {
         float4x4 viewProj;
         float4x4 invViewProj;
         float4 cam;   // xyz position, w time
         float4 sun;   // xyz direction towards the sun
+        float4 sunCol;
         float4x4 lightViewProj;
     };
 
@@ -78,26 +79,46 @@ enum Shaders {
         return pow(saturate(1.0 - abs(a - b)), 6.0);
     }
 
-    float3 skyColor(float3 d, float3 sunDir, float time) {
+    // Warm horizon as the sun drops, shared by the sky and the distance fog so a
+    // sunset does not fade into a daylight-blue band.
+    float3 horizonColor(float3 sunDir) {
+        float low = 1.0 - saturate(sunDir.y * 2.2);
+        return mix(HORIZON, float3(1.0, 0.70, 0.44), low * 0.55);
+    }
+
+    // One cloud layer at a fixed altitude. The sky intersects it along the view
+    // ray and shading projects onto it along the sun, so the shadow you walk
+    // through is the cloud you can see.
+    float cloudField(float2 xz, float time) {
+        return fbm(xz * 0.0055 + float2(time * 0.011, time * 0.006));
+    }
+
+    float cloudShade(float3 wp, float3 sunDir, float time) {
+        float t = (CLOUD_H - wp.y) / max(sunDir.y, 0.10);
+        return smoothstep(0.50, 0.68, cloudField(wp.xz + sunDir.xz * t, time));
+    }
+
+    float3 skyColor(float3 d, float3 sunDir, float3 sunCol, float3 cam, float time) {
         float h = saturate(d.y);
-        float3 c = mix(HORIZON, ZENITH, pow(h, 0.55));
+        float low = 1.0 - saturate(sunDir.y * 2.2);
+        float3 c = mix(horizonColor(sunDir), mix(ZENITH, float3(0.22, 0.30, 0.62), low * 0.5), pow(h, 0.55));
         float sd = saturate(dot(d, sunDir));
-        c += SUNCOL * (pow(sd, 700.0) * 5.0 + pow(sd, 10.0) * 0.18);
+        c += sunCol * (pow(sd, 700.0) * 5.0 + pow(sd, 10.0) * 0.18);
         if (d.y > 0.01) {
-            float2 uv = d.xz / (d.y + 0.15) * 1.6 + float2(time * 0.012, 0.0);
-            float n = fbm(uv * 1.2);
-            float cl = smoothstep(0.52, 0.80, n);
-            float fade = smoothstep(0.0, 0.22, d.y);
+            float t = (CLOUD_H - cam.y) / max(d.y, 0.02);
+            float n = cloudField(cam.xz + d.xz * t, time);
+            float cl = smoothstep(0.52, 0.72, n);
+            float fade = smoothstep(0.0, 0.16, d.y);
             float3 cc = mix(float3(0.80, 0.87, 0.97), float3(1.0), smoothstep(0.5, 0.92, n));
             c = mix(c, cc, cl * fade * 0.95);
         }
         return c;
     }
 
-    float3 applyFog(float3 c, float3 wp, float3 cam) {
+    float3 applyFog(float3 c, float3 wp, float3 cam, float3 sunDir) {
         float d = distance(wp, cam);
         float f = 1.0 - exp(-d * 0.0035);
-        float3 lit = mix(c, HORIZON, f);
+        float3 lit = mix(c, horizonColor(sunDir), f);
         float uw = uwAmount(cam.y);
         if (uw > 0.0) {
             // Water absorbs red first and swallows distance far faster than air.
@@ -124,7 +145,7 @@ enum Shaders {
     fragment float4 fs_sky(SkyOut in [[stage_in]], constant Frame& f [[buffer(1)]]) {
         float4 w = f.invViewProj * float4(in.ndc, 1.0, 1.0);
         float3 dir = normalize(w.xyz / w.w - f.cam.xyz);
-        float3 c = skyColor(dir, normalize(f.sun.xyz), f.cam.w);
+        float3 c = skyColor(dir, normalize(f.sun.xyz), f.sunCol.rgb, f.cam.xyz, f.cam.w);
         // Submerged, the water surface geometry covers everything above the
         // horizon, so this only shows where a downward ray misses the terrain:
         // the open water below.
@@ -200,7 +221,10 @@ enum Shaders {
                 float gw = max(fwidth(g.x), fwidth(g.y));
                 float grout = 1.0 - smoothstep(0.018, 0.018 + max(gw, 0.006), min(e.x, e.y));
                 albedo *= 1.0 - 0.16 * grout;
-                albedo *= 1.0 - 0.45 * smoothstep(PLAZA_R - 0.6, PLAZA_R, pd);
+                // Deliberate stone border ring, then a contact shadow under the
+                // kerb — the floor used to just stop against the grass.
+                albedo = mix(albedo, float3(0.90, 0.85, 0.75), smoothstep(PLAZA_R - 1.1, PLAZA_R - 0.75, pd));
+                albedo *= 1.0 - 0.10 * smoothstep(PLAZA_R - 0.55, PLAZA_R - 0.15, pd);
             } else {
                 // Ground detail. The vertex colour already carries the broad
                 // material blend (sand -> grass -> rock, by height then slope);
@@ -267,27 +291,41 @@ enum Shaders {
         // dot(N,V)=0 puts a discontinuity exactly on the line where the ground
         // is tangent to the view, which shows up as a dotted seam along shores.
         float side = smoothstep(-0.12, 0.12, dot(Ng, V));
+        // Drifting cloud shadows. Same field the sky draws, projected along the
+        // sun, so a shadow crossing the island matches the cloud overhead.
+        float sunlit = 1.0 - 0.60 * cloudShade(in.wp, L, f.cam.w);
         float wrap = mix(saturate(dot(-Ng, L) * 0.5 + 0.5), saturate(dot(Ng, L) * 0.5 + 0.5), side);
         float diff = smoothstep(0.35, 0.80, wrap);
         float ny = mix(-Ng.y, Ng.y, side);
-        float3 amb = mix(float3(0.82, 0.76, 0.68), float3(0.74, 0.84, 1.0), ny * 0.5 + 0.5);
-        float3 col = albedo * (amb * 0.74 + SUNCOL * diff * 0.58 * shadow);
+        // Hemispheric ambient: cool sky above, warm bounce below. Vertical faces
+        // get a little extra warmth when they face the sun, otherwise every wall
+        // of a building receives identical light and the form disappears.
+        float3 amb = mix(float3(0.80, 0.73, 0.62), float3(0.70, 0.82, 1.0), ny * 0.5 + 0.5);
+        float horiz = saturate(1.0 - abs(ny));
+        float2 nxz = Ng.xz / max(length(Ng.xz), 1e-4);
+        float face = 0.5 + 0.5 * dot(nxz, normalize(float3(L.x, 0.0, L.z)).xz);
+        amb *= mix(float3(1.0), float3(1.14, 1.05, 0.90), face * horiz);
+        // Dusk: the sky dims and warms as the sun drops, otherwise the fixed
+        // ambient keeps a sunset looking like midday.
+        float day = saturate(L.y * 2.6);
+        amb *= mix(0.72, 1.0, day) * mix(float3(1.16, 0.94, 0.80), float3(1.0), day);
+        float3 col = albedo * (amb * 0.74 + f.sunCol.rgb * diff * 0.58 * shadow * sunlit);
         // Thin foliage transmits sunlight: viewing a frond from underneath while
         // the sun lights its top should glow, not go black.
         float through = in.trans * saturate(-dot(Ng, V)) * saturate(dot(Ng, L));
-        col += albedo * SUNCOL * through * 0.55;
+        col += albedo * f.sunCol.rgb * through * 0.55 * sunlit;
         // Caustics on anything below the surface, fading out with depth.
         float uw = uwAmount(f.cam.y);
         if (uw > 0.0 && in.wp.y < 0.0 && Ng.y > 0.0) {
             float cau = caustics(in.wp.xz, f.cam.w);
-            col += SUNCOL * cau * uw * Ng.y * 0.55 * exp(in.wp.y * 0.35) * shadow;
+            col += f.sunCol.rgb * cau * uw * Ng.y * 0.55 * exp(in.wp.y * 0.35) * shadow * sunlit;
         }
         // A little additive sky fill in shade: cool, and it keeps shadowed sand
         // and grass from going muddy without desaturating the lit areas.
         col += float3(0.030, 0.050, 0.082) * (1.0 - shadow);
         float luma = dot(col, float3(0.299, 0.587, 0.114));
         col = mix(float3(luma), col, 1.12);
-        return float4(applyFog(col, in.wp, f.cam.xyz), 1.0);
+        return float4(applyFog(col, in.wp, f.cam.xyz, L), 1.0);
     }
 
     // ---- Water ----------------------------------------------------------------
@@ -347,7 +385,12 @@ enum Shaders {
         float2 slope = wv.yz * 1.5 * (1.0 - 0.8 * calm);
         float3 N = normalize(float3(-slope.x, 1.0, -slope.y));
 
-        float2 uv = (in.wp.xz + EXTENT) / (2.0 * EXTENT);
+        // Refraction: bend the lookup of the seabed along the wave normal. It
+        // shifts the shoreline and the shallow shelf instead of the whole
+        // screen, which is what a second scene pass would cost us.
+        float2 uv0 = (in.wp.xz + EXTENT) / (2.0 * EXTENT);
+        float d0 = max(in.wp.y - hmap.sample(s, uv0).r, 0.0);
+        float2 uv = (in.wp.xz + N.xz * (0.35 + d0 * 0.55) + EXTENT) / (2.0 * EXTENT);
         float ground = hmap.sample(s, uv).r;
         float depth = max(in.wp.y - ground, 0.0);
 
@@ -358,12 +401,12 @@ enum Shaders {
 
         float3 R = reflect(-V, N);
         R.y = abs(R.y);
-        float3 refl = skyColor(R, L, t);
+        float3 refl = skyColor(R, L, f.sunCol.rgb, f.cam.xyz, t);
         float fres = 0.05 + 0.95 * pow(1.0 - saturate(dot(N, V)), 5.0);
         float3 col = mix(base, refl, clamp(fres * 1.15, 0.0, 0.85));
 
         float3 H = normalize(L + V);
-        col += SUNCOL * pow(saturate(dot(N, H)), 350.0) * 2.2;
+        col += f.sunCol.rgb * pow(saturate(dot(N, H)), 350.0) * 2.2;
 
         // Shadows are intentionally not applied to the water surface: at grazing
         // angles the shadow-map texel footprint blows up and the island's terrain
@@ -389,12 +432,41 @@ enum Shaders {
             float3 toSurf = normalize(in.wp - f.cam.xyz);
             float3 surfN = normalize(float3(-slope.x * 2.2, 1.0, -slope.y * 2.2));
             float window = smoothstep(0.58, 0.78, saturate(dot(toSurf, surfN)));
-            float3 ceilCol = mix(skyColor(float3(0.0, 1.0, 0.0), L, t), float3(0.72, 0.95, 1.0), 0.35);
+            float3 ceilCol = mix(skyColor(float3(0.0, 1.0, 0.0), L, f.sunCol.rgb, f.cam.xyz, t), float3(0.72, 0.95, 1.0), 0.35);
             float3 under = mix(UWDEEP * 1.6, ceilCol, window);
             col = mix(col, under, uw);
             alpha = mix(alpha, 1.0, uw);
         }
-        return float4(applyFog(col, in.wp, f.cam.xyz), alpha);
+        return float4(applyFog(col, in.wp, f.cam.xyz, L), alpha);
+    }
+
+    // ---- Particles -----------------------------------------------------------
+
+    struct POut {
+        float4 pos [[position]];
+        float4 col;
+        float2 uv;
+    };
+
+    vertex POut vs_particle(uint vid [[vertex_id]],
+                            const device VIn* vin [[buffer(0)]],
+                            constant Frame& f [[buffer(1)]]) {
+        VIn v = vin[vid];
+        POut o;
+        o.pos = f.viewProj * float4(v.pos.xyz, 1.0);
+        o.col = v.col;
+        o.uv = v.nrm.xy;
+        return o;
+    }
+
+    fragment float4 fs_particle(POut in [[stage_in]]) {
+        float d = length(in.uv);
+        if (d > 1.0) { discard_fragment(); }
+        // Soft round sprite: foam and droplets both read better without a hard
+        // square edge, and there is no texture atlas to sample.
+        float a = in.col.a * smoothstep(1.0, 0.15, d);
+        float3 c = in.col.rgb * (1.0 + 0.30 * (1.0 - d));
+        return float4(c, a * a);
     }
 
     // ---- Bloom + tone mapping ------------------------------------------------

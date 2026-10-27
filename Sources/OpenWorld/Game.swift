@@ -41,6 +41,7 @@ final class Game {
     var walkPhase: Float = 0
     var speedNorm: Float = 0
     var time: Float = 0
+    let particles = ParticleSystem()
 
     var camYaw: Float = Float.pi
     var camPitch: Float = 0.25
@@ -133,6 +134,8 @@ final class Game {
         // Vertical: gravity, buoyancy in deep water, terrain snap.
         let g = World.height(np.x, np.z)
         let deep = g < -1.1
+        let wasSwimming = swimming
+        let fallSpeed = vel.y
         if deep && pos.y < Game.swimY + 0.35 {
             vel.y += (Game.swimY - pos.y) * 50 * dt - vel.y * 4 * dt + sin(time * 2) * 0.4 * dt
         } else {
@@ -163,6 +166,15 @@ final class Game {
             facing += d * min(1, 14 * dt)
         }
         walkPhase += speed * dt * 2.6
+
+        // Water spray. Breaking the surface throws a burst; swimming and wading
+        // leave foam behind.
+        if swimming && !wasSwimming && fallSpeed < -3.5 {
+            particles.splash(at: V3(pos.x, 0, pos.z), strength: min(2.4, -fallSpeed / 5))
+        }
+        let wading = !swimming && onGround && g < -0.1
+        particles.update(dt: dt, swimming: swimming, speed: speed,
+                         feet: V3(pos.x, max(pos.y, 0), pos.z), wading: wading)
 
         updateCamera(dt: dt)
     }

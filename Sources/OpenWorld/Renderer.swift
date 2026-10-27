@@ -10,6 +10,7 @@ struct FrameUniforms {
     var invViewProj: M4
     var cam: V4
     var sun: V4
+    var sunCol: V4
     var lightViewProj: M4
 }
 
@@ -47,10 +48,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let skyPSO: MTLRenderPipelineState
     private let mainPSO: MTLRenderPipelineState
     private let waterPSO: MTLRenderPipelineState
+    private let particlePSO: MTLRenderPipelineState
     private let shadowMapPSO: MTLRenderPipelineState
     private let skyDepth: MTLDepthStencilState
     private let opaqueDepth: MTLDepthStencilState
     private let blendDepth: MTLDepthStencilState
+    private let particleDepth: MTLDepthStencilState
     private let shadowDepth: MTLDepthStencilState
 
     // Bloom / post-process
@@ -74,16 +77,31 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let waterIndexCount: Int
     private let heightTexture: MTLTexture
     private let shadowMap: MTLTexture
+    private var particleBuffer: MTLBuffer?
+    private var particleVerts: [Vertex] = []
 
-    private let sunDir = normalize(V3(0.5, 0.62, 0.45))
+    /// Hour 12 reproduces the hand-picked key light; the sun swings from the
+    /// horizon at 06:00 to the opposite horizon at 18:00.
+    static func sun(hour: Float) -> (dir: V3, color: V3) {
+        let h = (hour - 12) / 6
+        let azim: Float = 0.838 + h * 1.05
+        let elev = max(0.744 * (1 - h * h), 0.05)
+        let dir = normalize(V3(cos(elev) * sin(azim), sin(elev), cos(elev) * cos(azim)))
+        let warm = sstep(0.10, 0.72, elev)
+        return (dir, V3(1.0, lerp(0.52, 0.95, warm), lerp(0.28, 0.80, warm)))
+    }
+
+    private let sunDir: V3
+    private let sunColor: V3
     private var lastTime = CACurrentMediaTime()
     private var fpsFrames = 0
     private var fpsStart = CACurrentMediaTime()
     private weak var view: MTKView?
 
-    init(device: MTLDevice) {
+    init(device: MTLDevice, hour: Float = 12) {
         self.device = device
         queue = device.makeCommandQueue()!
+        (sunDir, sunColor) = Renderer.sun(hour: hour)
 
         let library: MTLLibrary
         do {
@@ -167,6 +185,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         skyPSO = pipeline("vs_sky", "fs_sky", vertexDescriptor: nil, blend: false)
         mainPSO = pipeline("vs_main", "fs_main", vertexDescriptor: vd, blend: false)
         waterPSO = pipeline("vs_water", "fs_water", vertexDescriptor: nil, blend: true)
+        particlePSO = pipeline("vs_particle", "fs_particle", vertexDescriptor: vd, blend: true)
         shadowMapPSO = shadowPipeline("vs_shadow")
 
         // Bloom / post-process pipelines.
@@ -184,6 +203,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         skyDepth = depthState(.always, write: false)
         opaqueDepth = depthState(.less, write: true)
         blendDepth = depthState(.lessEqual, write: false)
+        particleDepth = depthState(.lessEqual, write: false)
         shadowDepth = depthState(.less, write: true)
         postDepth = depthState(.always, write: false)
 
@@ -437,6 +457,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             invViewProj: vp.inverse,
             cam: V4(game.camPos, game.time),
             sun: V4(sunDir, 0),
+            sunCol: V4(sunColor, 0),
             lightViewProj: lightVP
         )
         enc.setCullMode(.none)
@@ -463,6 +484,51 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setVertexBuffer(waterGrid, offset: 0, index: 0)
         enc.setFragmentTexture(heightTexture, index: 0)
         enc.drawIndexedPrimitives(type: .triangle, indexCount: waterIndexCount, indexType: .uint32, indexBuffer: waterIndices, indexBufferOffset: 0)
+
+        // Spray and foam last: it has to sit over the water surface.
+        encodeParticles(enc, view: viewM)
+    }
+
+    private func encodeParticles(_ enc: MTLRenderCommandEncoder, view: M4) {
+        let parts = game.particles.parts
+        // Below the surface the water plane is opaque and would hide the spray,
+        // but it writes no depth, so the pass has to be skipped instead.
+        guard !parts.isEmpty, game.camPos.y > 0 else { return }
+        let right = normalize(V3(view.columns.0.x, view.columns.1.x, view.columns.2.x))
+        let up = normalize(V3(view.columns.0.y, view.columns.1.y, view.columns.2.y))
+
+        if particleVerts.count < parts.count * 6 {
+            particleVerts = [Vertex](repeating: Vertex(pos: .zero, nrm: .zero, col: .zero),
+                                     count: max(parts.count * 6, 6144))
+        }
+        var n = 0
+        for p in parts {
+            // Fade out over the lifetime; foam spreads as it goes, droplets shrink.
+            let k = p.life / p.maxLife
+            let fade = clampf(k * 4, 0, 1) * k * 0.8
+            let r = p.size * (p.gravity == 0 ? 1.7 - 0.6 * k : 0.55 + 0.7 * k)
+            let c = V4(p.tint * (0.9 + 0.12 * k), fade)
+            let quad = [V2(-1, -1), V2(1, -1), V2(1, 1), V2(-1, -1), V2(1, 1), V2(-1, 1)]
+            for uv in quad {
+                let off = (right * uv.x + up * uv.y) * r
+                particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, 0, 0), col: c)
+                n += 1
+            }
+        }
+        let bytes = n * MemoryLayout<Vertex>.stride
+        if particleBuffer == nil || particleBuffer!.length < bytes {
+            particleBuffer = device.makeBuffer(length: max(bytes, 6144 * MemoryLayout<Vertex>.stride),
+                                               options: .storageModeShared)!
+        }
+        let buf = particleBuffer!
+        particleVerts.withUnsafeBytes { raw in
+            buf.contents().copyMemory(from: raw.baseAddress!, byteCount: bytes)
+        }
+
+        enc.setRenderPipelineState(particlePSO)
+        enc.setDepthStencilState(particleDepth)
+        enc.setVertexBuffer(buf, offset: 0, index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
     }
 
     private func encodeShadowMap(_ cb: MTLCommandBuffer) {
@@ -488,6 +554,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             invViewProj: lightVP.inverse,
             cam: V4(0, 0, 0, 0),
             sun: V4(sunDir, 0),
+            sunCol: V4(sunColor, 0),
             lightViewProj: lightVP
         )
         enc.setVertexBytes(&frame, length: MemoryLayout<FrameUniforms>.stride, index: 1)

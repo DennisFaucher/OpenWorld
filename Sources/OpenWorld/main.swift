@@ -3,7 +3,7 @@ import Metal
 
 let args = CommandLine.arguments
 
-/// `--shot out.png [--pos x z] [--yaw a] [--pitch p] [--dist d] [--time t] [--size w h]`
+/// `--shot out.png [--pos x z] [--yaw a] [--pitch p] [--dist d] [--time t] [--hour h] [--size w h]`
 /// renders one frame without opening a window, for quick visual checks.
 if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     func values(_ name: String, _ count: Int) -> [Float]? {
@@ -11,7 +11,7 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
         return (1...count).compactMap { Float(args[j + $0]) }
     }
     guard let device = MTLCreateSystemDefaultDevice() else { fatalError("No Metal device available") }
-    let renderer = Renderer(device: device)
+    let renderer = Renderer(device: device, hour: values("--hour", 1)?.first ?? 12)
     let game = renderer.game
     if let p = values("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], World.height(p[0], p[1]), p[1])
@@ -19,6 +19,13 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     if let v = values("--yaw", 1) { game.camYaw = v[0] }
     if let v = values("--pitch", 1) { game.camPitch = v[0] }
     if let v = values("--dist", 1) { game.camDist = v[0] }
+    // `--walk` holds forward for the simulated frames so movement, wakes and
+    // particles can be checked without a keyboard.
+    if args.contains("--walk") { renderer.input.keys.insert(Key.w) }
+    if args.contains("--walk-fast") {
+        renderer.input.keys.insert(Key.w)
+        renderer.input.keys.insert(Key.shift)
+    }
     for _ in 0..<90 { game.update(dt: 1.0 / 60, input: renderer.input) }
     if let v = values("--time", 1) { game.time = v[0] }
     let size = values("--size", 2) ?? [1920, 1080]

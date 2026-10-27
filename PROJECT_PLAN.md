@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: Milestone 0 complete (prototype)
+## Status: Milestone 0 (prototype) and M1 (look and feel) complete
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -26,8 +26,8 @@ Fix opportunistically; none block the next milestones.
 
 1. **Live input unverified.** Mouse capture, key handling, gamepad, and `swift run` window activation have not been exercised interactively. First task for anyone with a display: play it for a minute and fix whatever feels off (sensitivity, camera lag, jump feel, stuck keys).
 2. ~~**Thin dark line at some shorelines**~~ (fixed). Root cause was the two-sided lighting hard-flipping the normal at `dot(N,V) = 0`, which lands exactly on the line where the ground is tangent to the view; it is now a smooth front/back blend. The shallows were also made to fade in gradually (alpha ramp + wider `shallow` falloff) instead of going opaque within ~1 m of depth.
-3. **Plaza terrace:** the plaza is a flat disc blended into rising hills, so there is a visible bowl/rim with some muddy rock-colored slope near it. Consider lowering surrounding hills there, a retaining wall mesh, or steps.
-4. **Shaded walls look tan/drab** compared to the lit sides. Partly addressed by the additive cool sky fill in `fs_main`; still worth a proper ambient/ambient-occlusion term.
+3. ~~**Plaza terrace**~~ (fixed). The floor now ends on a modelled stone kerb ring (`World.buildProps`, 72 segments of three quads) plus a narrow stone border band and a contact shadow in the tile shader, so the checker stops on a deliberate edge instead of being cut off by grass. The mud-coloured slope is gone with the rock recolouring from the terrain item.
+4. ~~**Shaded walls look tan/drab**~~ (fixed). The ambient is now a hemispheric three-colour blend with a per-face term (vertical faces facing the sun get a little more warmth), so a building's four walls no longer receive identical light. Contact occlusion is baked into the mesh: `MeshBuilder.groundedBox` ramps the wall colour darker over the lowest ~2.4 m through `quad4` per-corner colours.
 5. ~~**Palm frond undersides are dark.**~~ (fixed). The fronds carry a translucency flag in `nrm.w`; `fs_main` adds `albedo * SUNCOL * saturate(-dot(Ng,V)) * saturate(dot(Ng,L)) * 0.55`, so looking up at a sunlit frond glows green instead of going black.
 6. **Water vertices "swim"** slightly as the camera moves because the grid is camera-centred with non-uniform spacing. Currently hidden by small amplitude; a stable clip-map would fix it.
 7. **Camera** can still clip into the player at its 1.5 min distance when backed into a wall; props' collision is approximated by `topY`.
@@ -59,11 +59,19 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Under the surface the water is a bright rippling ceiling inside the Snell window (~49 degrees from vertical); steeper grazing angles fall back to total internal reflection and go dark.
   - **The camera could never reach the water before.** `updateCamera` clamped it to `y >= 0.5` unconditionally, so the item was unreachable. It now clamps against the seabed while swimming, and the pitch limit went from -0.1 to -0.55 so you can dive the camera by pitching down in open water. On land it still never goes below the waterline.
   - Everything underwater decays to the single colour `UWFOG`. An earlier version varied the fog target with the fragment's own height, which made the distant seabed and the distant surface converge to different colours and drew a hard dark bar along the far waterline.
-- [ ] Water refraction/depth-fog improvements; wake and splash particles when the player moves in water
-- [ ] Sky: moving cloud shadows, optional time-of-day parameter (sun direction/color)
+- [x] Water refraction/depth-fog improvements; wake and splash particles when the player moves in water
+  - **Refraction** is done in the depth lookup rather than the image: the seabed height is re-sampled at `wp.xz + N.xz * (0.35 + depth * 0.55)`, so the shoreline and the shallow shelf wobble with the waves. A real screen-space refraction would need a second scene pass, which the single-pass layout does not have.
+  - `Particles.swift` is a CPU pool of ~600 sprites (`--walk` renders them headlessly). Foam is pinned to `y = 0.05` and spreads; droplets get gravity. The renderer rebuilds them as camera-facing quads each frame into one dynamic buffer, drawn after the water with depth test but no depth write.
+  - The particle pass is skipped entirely while the camera is submerged: the water plane is opaque from below but writes no depth, so spray above the surface would otherwise punch through it.
+  - **Unverified:** the water-entry splash (needs a real fall into deep water) has only been exercised by reading the code.
+- [x] Sky: moving cloud shadows, optional time-of-day parameter (sun direction/color)
+  - One cloud field (`cloudField`) at altitude 260. The sky intersects it along the view ray, so the clouds converge towards the horizon; `fs_main` projects the *same* field along the sun, so the shadow crossing the island belongs to the cloud overhead.
+  - `--hour` swings the sun on an arc that passes exactly through the original hand-picked direction at 12:00. `Renderer.sun(hour:)` also returns the light colour (warming to `1.0, 0.52, 0.28` at the horizon), which now travels in the frame uniform (`f.sunCol`) instead of the old `SUNCOL` constant. The ambient dims and warms with `L.y`, and `horizonColor` warms the sky and the distance fog together.
+  - A full sunset (17:30+) is dim and desaturated on the ground — physically right, since there is no bounce light, but it is the weakest part of the range.
 - [x] **Shorelines + foliage shading** (known issues 2 and 5)
   - Two-sided lighting now blends between the front/back diffuse terms instead of hard-flipping the normal, which removed the dotted dark seam that appeared where the ground was tangent to the view (most obvious along shorelines). Water shallows fade in over a wider band (`exp(-depth*0.30)`, alpha `0.20 + depth*0.30`) and the foam band is wider, so the shore is a gradient rather than a hard cut. Palm fronds carry a translucency flag so their undersides glow rather than going black.
-- [ ] Fix known issues 3-4 above
+- [x] Fix known issues 3-4 above
+  - Stone kerb around the plaza, ambient/face term for shaded walls, contact-AO gradient baked into building walls. See issues 3 and 4.
 
 ### M2: Character and movement
 - [ ] Proper movement feel: variable jump height, coyote time, ground-pound/roll or dive, wall-slide (pick a small set)
