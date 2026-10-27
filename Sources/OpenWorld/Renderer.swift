@@ -443,7 +443,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     // MARK: Scene
 
     private func encodeScene(_ enc: MTLRenderCommandEncoder, aspect: Float) {
-        let proj = M4.perspective(fovY: 60 * Float.pi / 180, aspect: aspect, near: 0.2, far: 4000)
+        let proj = M4.perspective(fovY: (60 + game.fovBoost) * Float.pi / 180, aspect: aspect, near: 0.2, far: 4000)
         let viewM = M4.lookAt(eye: game.camPos, center: game.camTarget, up: V3(0, 1, 0))
         let vp = proj * viewM
 

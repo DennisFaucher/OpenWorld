@@ -21,13 +21,16 @@ You cannot "see" the live window, so use the headless screenshot mode and look a
 ```bash
 .build/release/OpenWorld --shot shots/x.png \
   [--pos X Z] [--yaw RAD] [--pitch RAD] [--dist D] [--time T] [--hour H] [--walk] [--frames N] [--size W H]
+
+.build/release/OpenWorld --sim 60 [--walk] [--walk-fast] [--jump F D]   # physics trace, no render
 ```
 
 - Runs 90 simulation steps (so physics/camera settle), then renders a single 4x-MSAA frame offscreen. Default 1920x1080.
 - `--pos` places the player on the terrain at (X, Z). `--yaw` is camera orbit angle (0 = camera on +Z side looking toward -Z; pi = the default spawn view). `--time` sets the animation clock (water/clouds); `--hour` (0-24, default 12) moves the sun, which also moves the cloud shadows.
 - `--walk` holds forward for the simulated frames. Use it for anything that only happens while moving — test candidate: a swimming wake, `--pos 62 62 --yaw 0.9 --pitch 0.32 --dist 9 --walk`.
+- `--sim N` runs the same simulation with no window and no render, printing `y, vy, grounded, swimming, fov` per frame. `--jump F D` presses jump at frame `F` for `D` frames (repeatable), which is how jump height, the buffer and the coyote window are measured. This is the only way to check movement timing without a keyboard.
 - Several shots can run in parallel (`&` then `wait`).
-- Don't place test positions inside building footprints (see `World.buildProps` specs, plaza centre is (-18, 22)); the camera collision will pull in to its 1.5 minimum and you'll get a useless close-up.
+- Don't place test positions inside building footprints (see `World.buildProps` specs, plaza centre is (-18, 22)); the camera collision will pull in to its 2.2 minimum and you'll get a useless close-up.
 - Use `Read` on the PNG to inspect it. Good standard views: spawn (default), a beach (`--pos -50 40 --yaw 1.9 --pitch 0.10 --dist 9`), an overview (`--pos 40 -30 --yaw 2.6 --pitch 0.55 --dist 110`), the plaza (`--pos -18 40 --yaw 3.14 --pitch 0.22 --dist 22`), underwater (`--pos 62 62 --yaw 0.9 --pitch -0.28 --dist 5`).
 - `shots/` holds reference renders from the initial version.
 
@@ -68,6 +71,8 @@ All code is in `Sources/OpenWorld/`:
 - **Cloud shadows and the sky share one field.** `cloudField(xz, time)` is a noise field on a plane at `CLOUD_H` (260). `fs_sky` intersects it along the view ray, `fs_main` projects it along the sun (`cloudShade`), so a shadow crossing the island belongs to the cloud above it. Change the frequency or the drift in `cloudField` and both follow.
 - **The sun comes from `Renderer.sun(hour:)`.** `--hour` moves it along an arc that passes exactly through the original key light at 12:00; the light colour rides in `Frame.sunCol` (there is no `SUNCOL` constant any more). Anything that tints sunlit surfaces must use `f.sunCol.rgb`, or a sunset will keep white highlights.
 - **Underwater is a shader state, not a separate pass.** Everything is driven by `uwAmount(camY)` (0 above, 1 below, crossfaded over `+0.30 .. -0.10`). `applyFog`, `fs_sky` and `fs_water` all branch on it, and everything decays to the single constant `UWFOG` — do not give the underwater fog a height-dependent target colour, or the distant seabed and distant surface converge to different colours and the far waterline draws a hard dark bar. `Game.updateCamera` only lets the camera drop below the surface while `swimming`; on land it is clamped above the waterline.
+- **Movement feel lives in `Game.update`.** Variable jump height trims `vel.y` by 0.42 when the button is released mid-rise; `Game.coyote` (0.12 s) and `Game.jumpBufferTime` (0.12 s) cover late and early presses; falling uses 42 m/s² against 30 rising. The coyote window is currently **unreachable in play** — the terrain snap below re-glues the player to any slope dropping under 0.35 m per frame, so walking off a ledge never produces airborne frames. It only becomes observable once slope handling stops the player walking off cliffs.
+- **Camera.** `curDist` never collapses below 2.2 and the look-ahead offset fades out under `curDist` 2.5, because the boom's pivot is pushed forward: with the old 1.5 m minimum a pulled-in camera ended up inside the player's head.
 - Water level is y = 0, seabed is -4, swimming rest height is `Game.swimY` (-0.8). Terrain mesh covers +/-120; players are clamped to radius 104.
 - **Water depth is measured from mean sea level**, `-ground`, not from the displaced surface `wp.y`. Using `wp.y` made the shallow band and the shoreline foam follow the wave crests and smear into vertical streaks.
 - **Particles.** Foam is `gravity == 0` and is pinned to `y = 0.05`; droplets get gravity. `nrm.z` carries the kind into `fs_particle`, which breaks up foam with world-space noise — a plain soft disc reads as a bubble no matter how it is tinted. Never splash on every `swimming` transition without the cooldown: buoyancy bobbing will fire it repeatedly.

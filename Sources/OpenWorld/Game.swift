@@ -30,6 +30,11 @@ final class Game {
     static let spawn = V3(-18, World.plazaHeight, 28)
     static let swimY: Float = -0.8
     static let playerRadius: Float = 0.45
+    static let jumpVel: Float = 12.5
+    /// Grace period after walking off a ledge during which the jump still fires.
+    static let coyote: Float = 0.12
+    /// A jump pressed this far ahead of landing is remembered.
+    static let jumpBufferTime: Float = 0.12
 
     let obstacles: [Obstacle]
 
@@ -41,6 +46,8 @@ final class Game {
     var walkPhase: Float = 0
     var speedNorm: Float = 0
     var time: Float = 0
+    /// Degrees added to the base field of view, so a sprint has a little kick.
+    var fovBoost: Float = 0
     let particles = ParticleSystem()
 
     var camYaw: Float = Float.pi
@@ -52,6 +59,12 @@ final class Game {
     private var splashCooldown: Float = 0
     private var camInitialised = false
     private var prevPadJump = false
+    private var airTime: Float = 0
+    private var jumpBuffer: Float = 0
+    private var jumpCutArmed = false
+    private var camIdle: Float = 0
+    /// Raw move input this frame, so the camera can tell a run from a strafe.
+    private var wishInput = V2.zero
 
     init(obstacles: [Obstacle]) {
         self.obstacles = obstacles
@@ -68,18 +81,23 @@ final class Game {
         let pad = GCController.controllers().first?.extendedGamepad
 
         // Camera control.
+        var camMoved = input.mouseDX != 0 || input.mouseDY != 0
         camYaw -= input.mouseDX * 0.0035
         camPitch += input.mouseDY * 0.0035
         input.mouseDX = 0
         input.mouseDY = 0
-        if input.down(Key.left) { camYaw += 2 * dt }
-        if input.down(Key.right) { camYaw -= 2 * dt }
-        if input.down(Key.up) { camPitch -= 1.5 * dt }
-        if input.down(Key.down) { camPitch += 1.5 * dt }
+        if input.down(Key.left) { camYaw += 2 * dt; camMoved = true }
+        if input.down(Key.right) { camYaw -= 2 * dt; camMoved = true }
+        if input.down(Key.up) { camPitch -= 1.5 * dt; camMoved = true }
+        if input.down(Key.down) { camPitch += 1.5 * dt; camMoved = true }
         if let pad {
+            if abs(pad.rightThumbstick.xAxis.value) > 0.05 || abs(pad.rightThumbstick.yAxis.value) > 0.05 {
+                camMoved = true
+            }
             camYaw -= pad.rightThumbstick.xAxis.value * 2.5 * dt
             camPitch -= pad.rightThumbstick.yAxis.value * 1.8 * dt
         }
+        camIdle = camMoved ? 0 : camIdle + dt
         camPitch = clampf(camPitch, -0.55, 1.35)
         if input.down(Key.r) { respawn() }
 
@@ -93,6 +111,7 @@ final class Game {
         var wish = V2(mx, my)
         let wl = length(wish)
         if wl > 1 { wish /= wl }
+        wishInput = wish
         let fwd = V3(-sin(camYaw), 0, -cos(camYaw))
         let right = V3(cos(camYaw), 0, -sin(camYaw))
         let dir = right * wish.x + fwd * wish.y
@@ -109,14 +128,31 @@ final class Game {
         var hv = V2(vel.x, vel.z)
         hv += (V2(dir.x, dir.z) * maxSpeed - hv) * min(1, accel * dt)
 
-        // Jumping.
+        // Jumping. Coyote time keeps a jump alive for a moment after walking off
+        // a ledge and the buffer remembers a press made just before landing, so
+        // a jump that "definitely happened" is not swallowed by the frame it
+        // landed on.
         let padJump = pad?.buttonA.isPressed ?? false
-        let jump = input.jumpQueued || (padJump && !prevPadJump)
+        let jumpPressed = input.jumpQueued || (padJump && !prevPadJump)
         prevPadJump = padJump
         input.jumpQueued = false
-        if jump && (onGround || swimming) {
-            vel.y = swimming ? 9 : 12.5
+        if jumpPressed { jumpBuffer = Game.jumpBufferTime }
+        jumpBuffer -= dt
+
+        let canJump = onGround || swimming || airTime < Game.coyote
+        if jumpBuffer > 0 && canJump {
+            vel.y = swimming ? 9 : Game.jumpVel
             onGround = false
+            jumpBuffer = 0
+            airTime = Game.coyote          // a jump consumes the coyote window
+            jumpCutArmed = !swimming       // rising out of water is not cut short
+        }
+        // Variable height: releasing during the rise trims the rest of it, so a
+        // tap is a hop and a hold is a full jump off the same button.
+        let holding = input.down(Key.space) || padJump
+        if jumpCutArmed && !holding && vel.y > 0 {
+            vel.y *= 0.42
+            jumpCutArmed = false
         }
 
         // Horizontal move, world bounds, then push out of obstacles.
@@ -144,7 +180,11 @@ final class Game {
             let lift = clampf(Game.swimY - pos.y, -0.9, 0.9)
             vel.y += (lift * 60 - vel.y * 9) * dt + sin(time * 2) * 0.4 * dt
         } else {
-            vel.y -= 30 * dt
+            // Falling is heavier than rising. That asymmetry is most of what
+            // separates a jump that feels sharp from one that feels floaty, and
+            // the clamp stops a long drop tunnelling through the terrain.
+            vel.y -= (vel.y > 0 ? 30 : 42) * dt
+            vel.y = max(vel.y, -48)
         }
         np.y += vel.y * dt
         if np.y <= g {
@@ -157,6 +197,7 @@ final class Game {
         } else {
             onGround = false
         }
+        airTime = onGround ? 0 : airTime + dt
         swimming = deep && np.y < Game.swimY + 0.35
 
         vel.x = hv.x
@@ -238,7 +279,23 @@ final class Game {
     }
 
     private func updateCamera(dt: Float) {
-        let desired = pos + V3(0, 1.5, 0)
+        let flat = V2(vel.x, vel.z)
+        let hs = length(flat)
+
+        // Swing back behind the runner once the player has left the camera alone
+        // for a moment. Only while pushing forward: recentring during a strafe
+        // would rotate the frame the strafe is measured in and fight the player.
+        if camIdle > 1.2 && !swimming && onGround && hs > 4 && wishInput.y > 0.5 {
+            let want = facing + Float.pi
+            let d = atan2(sin(want - camYaw), cos(want - camYaw))
+            camYaw += d * min(1, 0.9 * dt)
+        }
+        // A little look-ahead along the run, so the frame shows where the player
+        // is going rather than centring them dead. It fades out as the camera is
+        // pulled in, or a collapsed boom would leave the camera inside the head.
+        let leanFade = clampf((curDist - 2.5) / 4, 0, 1)
+        let lean = hs > 0.8 ? V3(flat.x, 0, flat.y) / hs * (min(hs, 14) * 0.07 * leanFade) : .zero
+        let desired = pos + V3(0, 1.5, 0) + lean
         if !camInitialised {
             camTarget = desired
             curDist = camDist
@@ -246,6 +303,11 @@ final class Game {
         } else {
             camTarget += (desired - camTarget) * min(1, 12 * dt)
         }
+        // A sprint widens the lens slightly; it reads as speed without moving
+        // anything in the world.
+        let wantFov = (onGround && hs > 10) ? min(6, (hs - 10) * 0.9) : 0
+        fovBoost += (wantFov - fovBoost) * min(1, 6 * dt)
+
         let dirV = V3(sin(camYaw) * cos(camPitch), sin(camPitch), cos(camYaw) * cos(camPitch))
 
         // March out from the player and stop short of anything solid.
@@ -254,7 +316,7 @@ final class Game {
         for i in 1...steps {
             let t = Float(i) / Float(steps) * camDist
             if cameraBlocked(camTarget + dirV * t) {
-                allowed = max(t - camDist / Float(steps) - 0.3, 1.5)
+                allowed = max(t - camDist / Float(steps) - 0.3, 2.2)
                 break
             }
         }

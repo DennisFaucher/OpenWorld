@@ -61,6 +61,8 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--hour H` | Time of day, `0`–`24`; `12` (the default) is the original key light |
 | `--walk` | Hold forward for the simulated frames, so wakes and splashes can be checked |
 | `--frames N` | Number of simulation steps before the frame, default `90`; use it to catch a splash mid-air |
+| `--sim N` | Skip rendering and print the player state (y, velocity, grounded, swimming, FOV) for `N` frames — how jump timing was measured |
+| `--jump F D` | Only with `--sim`: press jump at frame `F` and hold it for `D` frames. Repeat the flag for several presses |
 | `--size W H` | Output resolution, default 1920x1080 |
 
 It runs 90 simulation steps first so physics and the camera settle, then renders one 4x-MSAA frame offscreen.

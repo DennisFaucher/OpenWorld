@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v1.0 released — milestone 0 (prototype) and M1 (look and feel) complete
+## Status: v1.0 released — M1 (look and feel) complete, M2 (character and movement) in progress
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -76,10 +76,15 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Stone kerb around the plaza, ambient/face term for shaded walls, contact-AO gradient baked into building walls. See issues 3 and 4.
 
 ### M2: Character and movement
-- [ ] Proper movement feel: variable jump height, coyote time, ground-pound/roll or dive, wall-slide (pick a small set)
+- [x] Proper movement feel: variable jump height, coyote time, jump buffering, heavier falling
+  - Variable height cuts `vel.y` by 0.42 on release, so a tap is a 0.58 m hop and a hold is a 2.43 m jump off the same button. Coyote (0.12 s) and the buffer (0.12 s) cover presses made just after leaving / just before landing, and falling uses 42 m/s² against 30 rising so the arc does not float.
+  - Measured with `--sim`: apex 2.43 m held vs 0.58 m tapped, 0.70 s of air, and a press 0.07 s before touchdown fires on the landing frame instead of being swallowed.
+  - **Coyote time is currently unreachable in play.** The terrain snap re-glues the player to any slope that drops under 0.35 m per frame, so walking off a ledge never produces an airborne frame. It is correct code waiting for slope handling below.
 - [ ] Better character model and animation (idle, run, jump, fall, swim strokes), still original design
 - [ ] Footstep dust / sand / water splash particles
-- [ ] Camera polish: auto-recenter behind movement, look-ahead, FOV kick while running
+- [x] Camera polish: auto-recenter behind movement, look-ahead, FOV kick while running
+  - Look-ahead offsets the boom pivot along the run by up to 1.0 m, faded out as the camera pulls in. Auto-recenter only runs after 1.2 s without camera input and only while pushing forward — recentring during a strafe would rotate the frame the strafe is measured in. The FOV kick is +3.6° at a sprint, eased in over about half a second.
+  - Chasing the look-ahead turned up a real bug: the boom floor was 1.5 m, but the pivot is pushed forward, so a pulled-in camera sat inside the player's head (reproduce with `--walk-fast` from the spawn, frame 60). The floor is now 2.2 m and the look-ahead fades below 2.5 m.
 - [ ] Slope handling: slide on steep slopes instead of walking up cliffs
 
 ### M3: "Spray pack" mechanic (original water-jet tool)
