@@ -61,7 +61,7 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--hour H` | Time of day, `0`–`24`; `12` (the default) is the original key light |
 | `--walk` | Hold forward for the simulated frames, so wakes and splashes can be checked |
 | `--frames N` | Number of simulation steps before the frame, default `90`; use it to catch a splash mid-air |
-| `--sim N` | Skip rendering and print the player state (position, velocity, grounded, swimming, FOV, terrain slope) for `N` frames — how jump timing was measured |
+| `--sim N` | Skip rendering and print the player state (position, velocity, grounded, swimming, FOV, terrain slope, current pose) for `N` frames — how jump timing and the stride were measured |
 | `--jump F D` | Press jump at frame `F` and hold it for `D` frames, with `--sim` or `--shot`. Repeat the flag for several presses |
 | `--look RAD` | With `--shot`: orbit the finished frame by `RAD` without re-simulating, for a side view of a run cycle |
 | `--slope-scan` | Print a histogram of the terrain gradient — how the 45° walkable limit was picked |
@@ -84,7 +84,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Lighting.** A 4096x4096 directional shadow map with hardware PCF, hemispheric ambient with a baked contact shadow where walls meet the ground, plus HDR rendering with bloom and a highlight-only tone curve.
 - **Camera.** Orbit with collision against terrain and props.
 
-![Walking the beach](docs/beach.jpg)
+![Running the beach](docs/beach.jpg)
 
 ![On the plaza at spawn](docs/spawn.jpg)
 
@@ -101,7 +101,7 @@ All code lives in `Sources/OpenWorld/`:
 | `main.swift` | Entry point; `--shot` headless mode, otherwise starts `NSApplication` |
 | `AppDelegate.swift` | Window, menu, and the `MTKView` that turns key/mouse events into input state |
 | `Game.swift` | Player physics, swimming, obstacle push-out, orbit camera with collision, gamepad |
-| `Particles.swift` | CPU particle pool for wakes, splashes and spray |
+| `Particles.swift` | CPU particle pool for wakes, splashes, footfall dust and skids |
 | `World.swift` | Terrain height and normals, terrain mesh, height texture, props, obstacles |
 | `MeshBuilder.swift` | CPU mesh primitives: quad, box, pyramid, frustum, sphere, palm |
 | `Renderer.swift` | Metal setup, render passes, bloom chain, headless PNG output |
@@ -113,7 +113,7 @@ All code lives in `Sources/OpenWorld/`:
 
 ## Status
 
-Early prototype, `v1.0`. Two milestones are complete: look and feel (terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day) and character and movement (jump feel, camera polish, a 45° slope limit with sliding, a rigged character with per-state animation, ground-contact particles). Next is the water-jet mechanic, then world content.
+Playable prototype, `v2.0`. Two milestones are complete. **Look and feel:** terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day. **Character and movement:** variable jump height with coyote time and buffering, camera look-ahead and recentring, a measured 45° walkable limit with sliding, a rigged character with six weight-blended states, and ground-contact particles. Next is the water-jet mechanic, then world content.
 
 The repository is not a complete game — there is no goal, no saving, and no audio.
 
