@@ -505,13 +505,20 @@ final class Renderer: NSObject, MTKViewDelegate {
         for p in parts {
             // Fade out over the lifetime; foam spreads as it goes, droplets shrink.
             let k = p.life / p.maxLife
-            let fade = clampf(k * 4, 0, 1) * k * 0.8
-            let r = p.size * (p.gravity == 0 ? 1.7 - 0.6 * k : 0.55 + 0.7 * k)
+            var fade = clampf(k * 5, 0, 1) * (0.30 + 0.70 * k)
+            // Foam lies on the water, so it is squashed into an ellipse and
+            // faded out at grazing angles. Flat quads were truer in plan view
+            // but collapsed into white scratches from eye level.
+            let foam = p.gravity == 0
+            if foam { fade *= sstep(0.10, 0.42, abs(dot(normalize(game.camPos - p.pos), V3(0, 1, 0)))) }
+            let r = p.size * (foam ? 1.7 - 0.6 * k : 0.55 + 0.7 * k)
+            let ax = right * r
+            let ay = up * r * (foam ? 0.60 : 1.0)
             let c = V4(p.tint * (0.9 + 0.12 * k), fade)
             let quad = [V2(-1, -1), V2(1, -1), V2(1, 1), V2(-1, -1), V2(1, 1), V2(-1, 1)]
             for uv in quad {
-                let off = (right * uv.x + up * uv.y) * r
-                particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, 0, 0), col: c)
+                let off = ax * uv.x + ay * uv.y
+                particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, foam ? 1 : 0, 0), col: c)
                 n += 1
             }
         }

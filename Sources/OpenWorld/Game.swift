@@ -49,6 +49,7 @@ final class Game {
     var camPos = V3.zero
     var camTarget = V3.zero
     private var curDist: Float = 9
+    private var splashCooldown: Float = 0
     private var camInitialised = false
     private var prevPadJump = false
 
@@ -137,7 +138,11 @@ final class Game {
         let wasSwimming = swimming
         let fallSpeed = vel.y
         if deep && pos.y < Game.swimY + 0.35 {
-            vel.y += (Game.swimY - pos.y) * 50 * dt - vel.y * 4 * dt + sin(time * 2) * 0.4 * dt
+            // Spring towards the swim line, but clamp the displacement: landing
+            // deep used to fling the player out of the water, and every bob back
+            // in re-triggered the splash.
+            let lift = clampf(Game.swimY - pos.y, -0.9, 0.9)
+            vel.y += (lift * 60 - vel.y * 9) * dt + sin(time * 2) * 0.4 * dt
         } else {
             vel.y -= 30 * dt
         }
@@ -167,11 +172,17 @@ final class Game {
         }
         walkPhase += speed * dt * 2.6
 
-        // Water spray. Breaking the surface throws a burst; swimming and wading
-        // leave foam behind.
-        if swimming && !wasSwimming && fallSpeed < -3.5 {
-            particles.splash(at: V3(pos.x, 0, pos.z), strength: min(2.4, -fallSpeed / 5))
+        // Water spray. Wading off the beach is a walk, not a drop: the terrain
+        // snap zeroes `vel.y` every frame, so the horizontal speed is what
+        // carries the impact there.
+        if swimming && !wasSwimming {
+            let power = max(-fallSpeed, speed * 0.6)
+            if power > 1.8 && splashCooldown <= 0 {
+                splashCooldown = 0.7
+                particles.splash(at: V3(pos.x, 0, pos.z), strength: min(2.4, 0.55 + power / 5))
+            }
         }
+        splashCooldown -= dt
         let wading = !swimming && onGround && g < -0.1
         particles.update(dt: dt, swimming: swimming, speed: speed,
                          feet: V3(pos.x, max(pos.y, 0), pos.z), wading: wading)

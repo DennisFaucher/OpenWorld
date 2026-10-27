@@ -26,7 +26,8 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
         renderer.input.keys.insert(Key.w)
         renderer.input.keys.insert(Key.shift)
     }
-    for _ in 0..<90 { game.update(dt: 1.0 / 60, input: renderer.input) }
+    let frames = values("--frames", 1).map { Int($0[0]) } ?? 90
+    for _ in 0..<frames { game.update(dt: 1.0 / 60, input: renderer.input) }
     if let v = values("--time", 1) { game.time = v[0] }
     let size = values("--size", 2) ?? [1920, 1080]
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))

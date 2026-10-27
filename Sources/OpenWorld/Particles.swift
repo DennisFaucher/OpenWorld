@@ -39,7 +39,7 @@ final class ParticleSystem {
             add(Particle(pos: p + V3(0, 0.1, 0),
                          vel: V3(cos(a) * r * 2.2 * s, Float.random(in: 2.2 ... 5.0) * s, sin(a) * r * 2.2 * s),
                          life: Float.random(in: 0.45 ... 0.9), maxLife: 0.9,
-                         size: Float.random(in: 0.10 ... 0.26) * s,
+                         size: Float.random(in: 0.06 ... 0.12) * s,
                          tint: V3(0.94, 0.98, 1.0), gravity: 17, drag: 1.6))
         }
         // A flat foam collar right where it went in.
@@ -49,7 +49,7 @@ final class ParticleSystem {
             add(Particle(pos: p + V3(cos(a) * r, 0.04, sin(a) * r),
                          vel: V3(cos(a) * 0.9, 0, sin(a) * 0.9),
                          life: Float.random(in: 0.6 ... 1.1), maxLife: 1.1,
-                         size: Float.random(in: 0.14 ... 0.26) * s,
+                         size: Float.random(in: 0.10 ... 0.22) * s,
                          tint: V3(0.92, 0.98, 1.0), gravity: 0, drag: 1.1))
         }
     }
@@ -57,28 +57,29 @@ final class ParticleSystem {
     func update(dt: Float, swimming: Bool, speed: Float, feet: V3, wading: Bool) {
         wakeTimer -= dt
         wadeTimer -= dt
-        // Foam trail behind a swimmer.
+        // Foam trail behind a swimmer. It has to overlap into a continuous wash:
+        // sparse round sprites read as bubbles rather than churned water.
         if swimming && speed > 1.4 && wakeTimer <= 0 {
-            wakeTimer = 0.055
-            for _ in 0..<2 {
+            wakeTimer = 0.035
+            for _ in 0..<5 {
                 let a = Float.random(in: 0 ..< 2 * Float.pi)
-                let r = Float.random(in: 0.35 ... 0.75)
+                let r = Float.random(in: 0.20 ... 0.85)
                 add(Particle(pos: V3(feet.x + cos(a) * r, 0.05, feet.z + sin(a) * r),
-                             vel: V3(cos(a) * 1.1, 0, sin(a) * 1.1),
-                             life: Float.random(in: 0.5 ... 0.95), maxLife: 0.95,
-                             size: Float.random(in: 0.12 ... 0.24), tint: V3(0.92, 0.98, 1.0),
+                             vel: V3(cos(a) * 0.55, 0, sin(a) * 0.55),
+                             life: Float.random(in: 0.40 ... 0.78), maxLife: 0.78,
+                             size: Float.random(in: 0.10 ... 0.20), tint: V3(0.95, 0.99, 1.0),
                              gravity: 0, drag: 1.4))
             }
         }
         // Kick-up while wading through the shallows.
-        if wading && speed > 2.5 && wadeTimer <= 0 {
-            wadeTimer = 0.16
-            for _ in 0..<3 {
+        if wading && speed > 2.0 && wadeTimer <= 0 {
+            wadeTimer = 0.11
+            for _ in 0..<4 {
                 let a = Float.random(in: 0 ..< 2 * Float.pi)
                 add(Particle(pos: V3(feet.x, feet.y + 0.05, feet.z),
-                             vel: V3(cos(a) * 1.0, Float.random(in: 1.4 ... 3.0), sin(a) * 1.0),
-                             life: Float.random(in: 0.3 ... 0.6), maxLife: 0.6,
-                             size: Float.random(in: 0.07 ... 0.16), tint: V3(0.95, 0.99, 1.0),
+                             vel: V3(cos(a) * 1.3, Float.random(in: 1.8 ... 3.6), sin(a) * 1.3),
+                             life: Float.random(in: 0.35 ... 0.7), maxLife: 0.7,
+                             size: Float.random(in: 0.10 ... 0.20), tint: V3(0.94, 0.99, 1.0),
                              gravity: 16, drag: 1.4))
             }
         }

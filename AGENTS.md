@@ -20,7 +20,7 @@ You cannot "see" the live window, so use the headless screenshot mode and look a
 
 ```bash
 .build/release/OpenWorld --shot shots/x.png \
-  [--pos X Z] [--yaw RAD] [--pitch RAD] [--dist D] [--time T] [--hour H] [--walk] [--size W H]
+  [--pos X Z] [--yaw RAD] [--pitch RAD] [--dist D] [--time T] [--hour H] [--walk] [--frames N] [--size W H]
 ```
 
 - Runs 90 simulation steps (so physics/camera settle), then renders a single 4x-MSAA frame offscreen. Default 1920x1080.
@@ -69,6 +69,8 @@ All code is in `Sources/OpenWorld/`:
 - **The sun comes from `Renderer.sun(hour:)`.** `--hour` moves it along an arc that passes exactly through the original key light at 12:00; the light colour rides in `Frame.sunCol` (there is no `SUNCOL` constant any more). Anything that tints sunlit surfaces must use `f.sunCol.rgb`, or a sunset will keep white highlights.
 - **Underwater is a shader state, not a separate pass.** Everything is driven by `uwAmount(camY)` (0 above, 1 below, crossfaded over `+0.30 .. -0.10`). `applyFog`, `fs_sky` and `fs_water` all branch on it, and everything decays to the single constant `UWFOG` — do not give the underwater fog a height-dependent target colour, or the distant seabed and distant surface converge to different colours and the far waterline draws a hard dark bar. `Game.updateCamera` only lets the camera drop below the surface while `swimming`; on land it is clamped above the waterline.
 - Water level is y = 0, seabed is -4, swimming rest height is `Game.swimY` (-0.8). Terrain mesh covers +/-120; players are clamped to radius 104.
+- **Water depth is measured from mean sea level**, `-ground`, not from the displaced surface `wp.y`. Using `wp.y` made the shallow band and the shoreline foam follow the wave crests and smear into vertical streaks.
+- **Particles.** Foam is `gravity == 0` and is pinned to `y = 0.05`; droplets get gravity. `nrm.z` carries the kind into `fs_particle`, which breaks up foam with world-space noise — a plain soft disc reads as a bubble no matter how it is tinted. Never splash on every `swimming` transition without the cooldown: buoyancy bobbing will fire it repeatedly.
 - **Building walls are baked with a contact shadow.** `MeshBuilder.groundedBox` emits each wall as three vertical bands (below ground, an AO ramp, plain wall) using `quad4` per-corner colours, because there is no SSAO. Plain `box` has no such ramp — use `groundedBox` for anything that stands on the terrain.
 - Water grid vertices are in a quadratic radial layout centred on the camera (fine near, coarse far). Vertex wave amplitude is deliberately small because vertices move with the camera; fine detail comes from fragment normals.
 - Colors are authored directly in display space (framebuffer is `bgra8Unorm`, no gamma handling). Keep that consistent.

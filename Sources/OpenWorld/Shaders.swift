@@ -98,7 +98,7 @@ enum Shaders {
         return smoothstep(0.50, 0.68, cloudField(wp.xz + sunDir.xz * t, time));
     }
 
-    float3 skyColor(float3 d, float3 sunDir, float3 sunCol, float3 cam, float time) {
+    float3 skyColor(float3 d, float3 sunDir, float3 sunCol, float3 cam, float time, float clouds) {
         float h = saturate(d.y);
         float low = 1.0 - saturate(sunDir.y * 2.2);
         float3 c = mix(horizonColor(sunDir), mix(ZENITH, float3(0.22, 0.30, 0.62), low * 0.5), pow(h, 0.55));
@@ -107,10 +107,13 @@ enum Shaders {
         if (d.y > 0.01) {
             float t = (CLOUD_H - cam.y) / max(d.y, 0.02);
             float n = cloudField(cam.xz + d.xz * t, time);
-            float cl = smoothstep(0.52, 0.72, n);
+            // A grazing ray meets the cloud plane thousands of units away, where
+            // one noise cell is sub-pixel: without this the water's reflection of
+            // the sky stretched clouds into ragged white shards.
+            float cl = smoothstep(0.52, 0.72, n) * (1.0 - smoothstep(700.0, 2400.0, t));
             float fade = smoothstep(0.0, 0.16, d.y);
             float3 cc = mix(float3(0.80, 0.87, 0.97), float3(1.0), smoothstep(0.5, 0.92, n));
-            c = mix(c, cc, cl * fade * 0.95);
+            c = mix(c, cc, cl * fade * 0.95 * clouds);
         }
         return c;
     }
@@ -145,7 +148,7 @@ enum Shaders {
     fragment float4 fs_sky(SkyOut in [[stage_in]], constant Frame& f [[buffer(1)]]) {
         float4 w = f.invViewProj * float4(in.ndc, 1.0, 1.0);
         float3 dir = normalize(w.xyz / w.w - f.cam.xyz);
-        float3 c = skyColor(dir, normalize(f.sun.xyz), f.sunCol.rgb, f.cam.xyz, f.cam.w);
+        float3 c = skyColor(dir, normalize(f.sun.xyz), f.sunCol.rgb, f.cam.xyz, f.cam.w, 1.0);
         // Submerged, the water surface geometry covers everything above the
         // horizon, so this only shows where a downward ray misses the terrain:
         // the open water below.
@@ -389,10 +392,13 @@ enum Shaders {
         // shifts the shoreline and the shallow shelf instead of the whole
         // screen, which is what a second scene pass would cost us.
         float2 uv0 = (in.wp.xz + EXTENT) / (2.0 * EXTENT);
-        float d0 = max(in.wp.y - hmap.sample(s, uv0).r, 0.0);
+        float d0 = max(-hmap.sample(s, uv0).r, 0.0);
         float2 uv = (in.wp.xz + N.xz * (0.35 + d0 * 0.55) + EXTENT) / (2.0 * EXTENT);
         float ground = hmap.sample(s, uv).r;
-        float depth = max(in.wp.y - ground, 0.0);
+        // Depth from the mean sea level, not the displaced surface: measuring
+        // from `wp.y` made the shallow band and its foam follow the wave crests
+        // and smear into vertical streaks.
+        float depth = max(-ground, 0.0);
 
         float shallow = exp(-depth * 0.30);
         float3 deepC = float3(0.02, 0.27, 0.62);
@@ -401,7 +407,9 @@ enum Shaders {
 
         float3 R = reflect(-V, N);
         R.y = abs(R.y);
-        float3 refl = skyColor(R, L, f.sunCol.rgb, f.cam.xyz, t);
+        // Clouds are left out of the reflection: the wave normals jitter the
+        // reflected ray enough to turn their high-contrast edges into shards.
+        float3 refl = skyColor(R, L, f.sunCol.rgb, f.cam.xyz, t, 0.0);
         float fres = 0.05 + 0.95 * pow(1.0 - saturate(dot(N, V)), 5.0);
         float3 col = mix(base, refl, clamp(fres * 1.15, 0.0, 0.85));
 
@@ -417,8 +425,12 @@ enum Shaders {
         // turned the shallows into a hard cut with a dark seam at the sand.
         float wob = 0.25 * sin(t * 1.3 + in.wp.x * 0.15) + 0.1 * sin(t * 2.1);
         float fo = smoothstep(0.85 + wob, 0.0, depth);
-        float breakup = vnoise(in.wp.xz * 2.2 + float2(t * 0.25, 0.0));
-        fo *= smoothstep(0.25, 0.65, breakup + 0.55 * fo);
+        // Foam: a band at the waterline, broken into flecks. The breakup noise is
+        // deliberately fine — at 2.2/m it read as cloud-shaped smears sitting on
+        // the shallow banks rather than churned water.
+        float breakup = vnoise(in.wp.xz * 5.5 + float2(t * 0.25, 0.0)) * 0.6
+                      + vnoise(in.wp.xz * 13.0 - float2(0.0, t * 0.31)) * 0.4;
+        fo *= smoothstep(0.30, 0.70, breakup + 0.45 * fo);
         col = mix(col, float3(1.0), fo * 0.9);
 
         float alpha = saturate(0.20 + depth * 0.30);
@@ -432,7 +444,7 @@ enum Shaders {
             float3 toSurf = normalize(in.wp - f.cam.xyz);
             float3 surfN = normalize(float3(-slope.x * 2.2, 1.0, -slope.y * 2.2));
             float window = smoothstep(0.58, 0.78, saturate(dot(toSurf, surfN)));
-            float3 ceilCol = mix(skyColor(float3(0.0, 1.0, 0.0), L, f.sunCol.rgb, f.cam.xyz, t), float3(0.72, 0.95, 1.0), 0.35);
+            float3 ceilCol = mix(skyColor(float3(0.0, 1.0, 0.0), L, f.sunCol.rgb, f.cam.xyz, t, 1.0), float3(0.72, 0.95, 1.0), 0.35);
             float3 under = mix(UWDEEP * 1.6, ceilCol, window);
             col = mix(col, under, uw);
             alpha = mix(alpha, 1.0, uw);
@@ -446,6 +458,8 @@ enum Shaders {
         float4 pos [[position]];
         float4 col;
         float2 uv;
+        float3 wp;
+        float kind;
     };
 
     vertex POut vs_particle(uint vid [[vertex_id]],
@@ -456,17 +470,23 @@ enum Shaders {
         o.pos = f.viewProj * float4(v.pos.xyz, 1.0);
         o.col = v.col;
         o.uv = v.nrm.xy;
+        o.wp = v.pos.xyz;
+        o.kind = v.nrm.z;
         return o;
     }
 
     fragment float4 fs_particle(POut in [[stage_in]]) {
         float d = length(in.uv);
         if (d > 1.0) { discard_fragment(); }
-        // Soft round sprite: foam and droplets both read better without a hard
-        // square edge, and there is no texture atlas to sample.
-        float a = in.col.a * smoothstep(1.0, 0.15, d);
-        float3 c = in.col.rgb * (1.0 + 0.30 * (1.0 - d));
-        return float4(c, a * a);
+        float a = in.col.a * smoothstep(1.0, 0.45, d);
+        if (in.kind > 0.5) {
+            // A soft disc reads as a bubble no matter how it is tinted, so foam
+            // is broken up with noise on the world position instead.
+            float n = vnoise(in.wp.xz * 5.0) * 0.55 + vnoise(in.wp.xz * 12.0 + 3.1) * 0.45;
+            a *= smoothstep(0.36, 0.70, n + 0.40 * smoothstep(0.65, 0.0, d));
+        }
+        float3 c = in.col.rgb * (1.0 + 0.18 * (1.0 - d));
+        return float4(c, a);
     }
 
     // ---- Bloom + tone mapping ------------------------------------------------
