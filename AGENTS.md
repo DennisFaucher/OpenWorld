@@ -73,7 +73,7 @@ All code is in `Sources/OpenWorld/`:
 ## Constraints
 
 - **No Nintendo (or other third-party) assets, names, characters, or ripped models/textures.** The target is an *original* world in a similar stylized-tropical aesthetic. The character is an original design. Keep it that way.
-- Don't commit large binary assets without asking. There is currently no git repository in this folder.
+- Don't commit large binary assets without asking. The package is versioned in git and published at https://github.com/DennisFaucher/OpenWorld; `.build/` and `shots/` are ignored, and `docs/` holds the README screenshots.
 
 ## Definition of done for a change
 

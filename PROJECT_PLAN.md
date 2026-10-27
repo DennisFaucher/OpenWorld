@@ -33,7 +33,7 @@ Fix opportunistically; none block the next milestones.
 7. **Camera** can still clip into the player at its 1.5 min distance when backed into a wall; props' collision is approximated by `topY`.
 8. Player can end up inside an obstacle if spawned/teleported there (push-out is per-frame, not swept).
 9. **Shadow map is re-rendered every frame** at 4096² (terrain + props + player, ~550k triangles). Only the player actually changes, so caching the static casters would be an easy win if frame time becomes an issue.
-10. No tests, no git repo yet.
+10. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v0.1 released).
 
 ## Roadmap
 
