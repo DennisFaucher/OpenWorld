@@ -479,7 +479,12 @@ enum Shaders {
         float d = length(in.uv);
         if (d > 1.0) { discard_fragment(); }
         float a = in.col.a * smoothstep(1.0, 0.45, d);
-        if (in.kind > 0.5) {
+        if (in.kind > 1.5) {
+            // Dust: a small sprite, so the breakup needs a higher frequency than
+            // foam, and the edge has to be softer than a droplet's.
+            float n = vnoise(in.wp.xz * 17.0 + in.wp.y * 7.0) * 0.6 + vnoise(in.wp.xz * 31.0) * 0.4;
+            a *= smoothstep(0.95, 0.28, d) * (0.55 + 0.75 * n);
+        } else if (in.kind > 0.5) {
             // A soft disc reads as a bubble no matter how it is tinted, so foam
             // is broken up with noise on the world position instead.
             float n = vnoise(in.wp.xz * 5.0) * 0.55 + vnoise(in.wp.xz * 12.0 + 3.1) * 0.45;

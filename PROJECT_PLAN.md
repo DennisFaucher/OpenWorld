@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v1.0 released — M1 (look and feel) complete, M2 (character and movement) in progress
+## Status: v1.0 released — M1 (look and feel) and M2 (character and movement) complete, M3 next
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -86,7 +86,12 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Airborne weight cross-fades on `vel.y` rather than switching at the apex, so the jump does not pop between rise and fall. The stride rate is now `min(speed, 11) * 1.5` — the old 2.6 multiplier was about twice a believable cadence.
   - Rig gotchas worth keeping: `out` is a Z rotation in the torso frame, so the same sign that abducts a hanging arm adducts a raised one (the rise pose uses a negative value to spread the arms). Limb angles are positive forward, which is why every joint applies `rotationX(-angle)`.
   - Verified headlessly with `--jump` on the shot path and `--look RAD`, which re-orbits the finished frame so a run cycle can be seen from the side: stride extremes at frames 38 and 50 of a `--walk` (hip ±45.8°, knee 11–63°), tucked-leg V-armed rise, arms-out fall, horizontal swim with the head and back above the surface, braced slide.
-- [ ] Footstep dust / sand / water splash particles
+- [x] Footstep dust / sand / water splash particles
+  - A third particle kind (`Particle.kind`: 0 droplet, 1 foam, 2 dust) rather than inferring the look from gravity, which was standing in for "is this foam". Dust gets its own high-frequency noise breakup in `fs_particle` and a soft edge; foam keeps the low-frequency one.
+  - Emission: one puff per foot contact (the stride advances by pi, so a change in the step index is the contact, alternating feet), a wider cloud on landing from a fall, a continuous skid while sliding, and a scuff when the player presses into a face too steep to climb. The last one closes the loop on the slope work: a silent stall read as "the game is stuck", and now it reads as digging in.
+  - Tint comes from the ground it left — sand, dry grass or rock via the same masks as `World.buildTerrain` — lightened 35% toward white, because a dust cloud is always paler than the surface. Dry ground only: the shallows already spray.
+  - Gotcha: on a steep face a puff spawned at the feet is *inside* the terrain and never draws, because it is depth-tested against the ground it just left. The skid cloud is lifted and given upward velocity for that reason.
+  - Verified headlessly: sand puffs trailing a run along the beach, a scuff cloud at the foot of the scarp while holding forward, a skid trail on the 48° face, an impact ring on landing on the plaza, nothing at all while idle.
 - [x] Camera polish: auto-recenter behind movement, look-ahead, FOV kick while running
   - Look-ahead offsets the boom pivot along the run by up to 1.0 m, faded out as the camera pulls in. Auto-recenter only runs after 1.2 s without camera input and only while pushing forward — recentring during a strafe would rotate the frame the strafe is measured in. The FOV kick is +3.6° at a sprint, eased in over about half a second.
   - Chasing the look-ahead turned up a real bug: the boom floor was 1.5 m, but the pivot is pushed forward, so a pulled-in camera sat inside the player's head (reproduce with `--walk-fast` from the spawn, frame 60). The floor is now 2.2 m and the look-ahead fades below 2.5 m.

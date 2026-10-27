@@ -76,6 +76,9 @@ final class Game {
     private var jumpBuffer: Float = 0
     private var jumpCutArmed = false
     private var camIdle: Float = 0
+    /// Walk-phase step counter. A change means a foot landed.
+    private var stepIndex = 0
+    private var dustTimer: Float = 0
     /// Raw move input this frame, so the camera can tell a run from a strafe.
     private var wishInput = V2.zero
 
@@ -197,6 +200,7 @@ final class Game {
         // part of a step into ground past the walk limit and keep the component
         // that runs along the contour.
         let nDest = World.normal(np.x, np.z)
+        var blockedBySlope = false
         if nDest.y < Game.walkSlopeY && World.height(np.x, np.z) > pos.y - 0.05 {
             let ux = -nDest.x, uz = -nDest.z
             let ul = sqrt(ux * ux + uz * uz)
@@ -205,6 +209,7 @@ final class Game {
                 if up > 0 {
                     np.x -= ux / ul * up
                     np.z -= uz / ul * up
+                    blockedBySlope = true
                 }
             }
         }
@@ -213,6 +218,7 @@ final class Game {
         let g = World.height(np.x, np.z)
         let deep = g < -1.1
         let wasSwimming = swimming
+        let wasGrounded = onGround
         let fallSpeed = vel.y
         if deep && pos.y < Game.swimY + 0.35 {
             // Spring towards the swim line, but clamp the displacement: landing
@@ -270,11 +276,57 @@ final class Game {
             }
         }
         splashCooldown -= dt
+
+        // Ground dust. The stride advances by pi per step, so a change in the
+        // step index is a foot contact; the shallows already spray, so only dry
+        // ground kicks anything up.
+        dustTimer -= dt
+        let dry = onGround && !swimming && g > 0.02
+        let faceDir = V3(sin(facing), 0, cos(facing))
+        let faceSide = V3(cos(facing), 0, -sin(facing))
+        let step = Int(walkPhase / Float.pi)
+        if step != stepIndex {
+            stepIndex = step
+            if dry && !sliding && speed > 1.4 {
+                let foot = pos + faceSide * (step % 2 == 0 ? 0.14 : -0.14)
+                particles.footstep(at: foot, dir: -faceDir * 0.5, tint: dustTint(foot),
+                                   strength: 0.55 + 0.45 * min(speed / 9, 1.4))
+            }
+        }
+        if dry && !wasGrounded && fallSpeed < -7 {
+            particles.footstep(at: pos, dir: .zero, tint: dustTint(pos),
+                               strength: clampf(-fallSpeed / 12, 0.7, 1.8))
+        }
+        if dry && sliding && speed > 1.2 && dustTimer <= 0 {
+            dustTimer = 0.06
+            particles.skid(at: pos + V3(0, 0.08, 0), dir: V3(vel.x, 0, vel.z) * 0.25,
+                           tint: dustTint(pos), strength: clampf(speed / 9, 0.6, 1.6))
+        }
+        // Scuffing at a face too steep to climb: the stall needs a visible cue,
+        // otherwise "this is too steep" reads as "the game is stuck".
+        if dry && blockedBySlope && length(wishInput) > 0.4 && dustTimer <= 0 {
+            dustTimer = 0.10
+            particles.skid(at: pos, dir: -faceDir * 0.5, tint: dustTint(pos), strength: 0.70)
+        }
         let wading = !swimming && onGround && g < -0.1
         particles.update(dt: dt, swimming: swimming, speed: speed,
                          feet: V3(pos.x, max(pos.y, 0), pos.z), wading: wading)
 
         updateCamera(dt: dt)
+    }
+
+    /// Dust takes the colour of the ground it comes off — pale sand, dry grass,
+    /// grey rock — using the same masks as `World.buildTerrain`, then lightened,
+    /// because a dust cloud is always paler than the surface it left.
+    private func dustTint(_ p: V3) -> V3 {
+        let h = World.height(p.x, p.z)
+        let n = World.normal(p.x, p.z)
+        let sand = V3(0.93, 0.86, 0.64)
+        let grass = V3(0.58, 0.63, 0.32)
+        let rock = V3(0.66, 0.64, 0.60)
+        let ground = lerp(sand, grass, sstep(1.10, 1.95, h))
+        let dusty = lerp(ground, rock, sstep(0.74, 0.52, n.y))
+        return lerp(dusty, V3(1.0, 0.97, 0.90), 0.35)
     }
 
     private func resolveObstacles(_ p: inout V3) {

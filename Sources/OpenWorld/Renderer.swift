@@ -519,16 +519,19 @@ final class Renderer: NSObject, MTKViewDelegate {
             // Foam lies on the water, so it is squashed into an ellipse and
             // faded out at grazing angles. Flat quads were truer in plan view
             // but collapsed into white scratches from eye level.
-            let foam = p.gravity == 0
+            let foam = p.kind == 1
+            let dust = p.kind == 2
             if foam { fade *= sstep(0.10, 0.42, abs(dot(normalize(game.camPos - p.pos), V3(0, 1, 0)))) }
-            let r = p.size * (foam ? 1.7 - 0.6 * k : 0.55 + 0.7 * k)
+            if dust { fade *= 1.15 }
+            let r = p.size * (foam ? 1.7 - 0.6 * k : (dust ? 0.9 + 1.1 * (1 - k) : 0.55 + 0.7 * k))
             let ax = right * r
-            let ay = up * r * (foam ? 0.60 : 1.0)
+            let ay = up * r * (foam ? 0.60 : (dust ? 0.92 : 1.0))
             let c = V4(p.tint * (0.9 + 0.12 * k), fade)
             let quad = [V2(-1, -1), V2(1, -1), V2(1, 1), V2(-1, -1), V2(1, 1), V2(-1, 1)]
             for uv in quad {
                 let off = ax * uv.x + ay * uv.y
-                particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, foam ? 1 : 0, 0), col: c)
+                let kind: Float = foam ? 1 : (dust ? 2 : 0)
+                particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, kind, 0), col: c)
                 n += 1
             }
         }

@@ -12,6 +12,9 @@ struct Particle {
     var tint: V3
     var gravity: Float
     var drag: Float
+    /// 0 droplet, 1 foam (pinned to the surface, squashed, broken up by noise),
+    /// 2 dust (rises, spreads, softer edge). Read by the renderer and shader.
+    var kind: Float = 0
 }
 
 /// Water wakes, landing splashes and wading spray. Foam sits pinned to the
@@ -50,7 +53,40 @@ final class ParticleSystem {
                          vel: V3(cos(a) * 0.9, 0, sin(a) * 0.9),
                          life: Float.random(in: 0.6 ... 1.1), maxLife: 1.1,
                          size: Float.random(in: 0.10 ... 0.22) * s,
-                         tint: V3(0.92, 0.98, 1.0), gravity: 0, drag: 1.1))
+                         tint: V3(0.92, 0.98, 1.0), gravity: 0, drag: 1.1, kind: 1))
+        }
+    }
+
+    /// A footfall: a few small puffs that spread and settle back down.
+    func footstep(at p: V3, dir: V3, tint: V3, strength: Float) {
+        let s = clampf(strength, 0.5, 1.8)
+        for _ in 0..<Int(3 + s * 3) {
+            let a = Float.random(in: 0 ..< 2 * Float.pi)
+            let r = Float.random(in: 0.04 ... 0.20)
+            add(Particle(pos: p + V3(cos(a) * r, 0.02, sin(a) * r),
+                         vel: dir * Float.random(in: 0.2 ... 0.6)
+                            + V3(cos(a) * 0.55, Float.random(in: 0.5 ... 1.4), sin(a) * 0.55),
+                         life: Float.random(in: 0.40 ... 0.75), maxLife: 0.75,
+                         size: Float.random(in: 0.13 ... 0.24) * s,
+                         tint: tint, gravity: 1.4, drag: 2.4, kind: 2))
+        }
+    }
+
+    /// A skid: bigger, faster dust thrown along the direction of travel. Sliding
+    /// and scuffing at a face too steep to climb both use this.
+    func skid(at p: V3, dir: V3, tint: V3, strength: Float) {
+        let s = clampf(strength, 0.5, 1.8)
+        for _ in 0..<Int(2 + s * 3) {
+            let a = Float.random(in: 0 ..< 2 * Float.pi)
+            let r = Float.random(in: 0 ... 0.18)
+            // Lifted clear of the surface: on a steep face a puff spawned at
+            // the feet is buried inside the terrain and never draws.
+            add(Particle(pos: p + V3(cos(a) * r, 0.10, sin(a) * r),
+                         vel: dir * Float.random(in: 0.4 ... 1.2)
+                            + V3(cos(a) * 0.8, Float.random(in: 0.9 ... 2.2), sin(a) * 0.8),
+                         life: Float.random(in: 0.50 ... 0.90), maxLife: 0.90,
+                         size: Float.random(in: 0.16 ... 0.30) * s,
+                         tint: tint, gravity: 2.2, drag: 2.0, kind: 2))
         }
     }
 
@@ -68,7 +104,7 @@ final class ParticleSystem {
                              vel: V3(cos(a) * 0.55, 0, sin(a) * 0.55),
                              life: Float.random(in: 0.40 ... 0.78), maxLife: 0.78,
                              size: Float.random(in: 0.10 ... 0.20), tint: V3(0.95, 0.99, 1.0),
-                             gravity: 0, drag: 1.4))
+                             gravity: 0, drag: 1.4, kind: 1))
             }
         }
         // Kick-up while wading through the shallows.
@@ -90,7 +126,7 @@ final class ParticleSystem {
             parts[i].vel *= max(0, 1 - parts[i].drag * dt)
             parts[i].pos += parts[i].vel * dt
             // Foam stays on the surface even when the sea is moving under it.
-            if parts[i].gravity == 0 { parts[i].pos.y = 0.05 }
+            if parts[i].kind == 1 { parts[i].pos.y = 0.05 }
         }
         parts.removeAll { $0.life <= 0 }
     }

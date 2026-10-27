@@ -75,6 +75,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 
 - **Terrain.** An analytic height function (`World.height`) — value-noise fbm warped into an island profile — sampled into a 240x240 mesh. Sand, grass and rock are blended per vertex by height and slope, with fragment-space detail layered underneath that fades out before it can alias.
 - **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, refracted shoreline, and animated foam along the shore. Swimming and wading leave foam and spray behind.
+- **Ground contact.** Every footfall kicks up dust tinted by the ground it came off — sand, dry grass or rock — plus a wider cloud on landing, a skid trail while sliding, and a scuff when you push into a face too steep to climb.
 - **Underwater.** Absorption fog, caustics on submerged surfaces, and the surface seen from below with the Snell window and total internal reflection.
 - **Sky and time of day.** One cloud layer at a fixed altitude, drawn both by the sky (where the view ray meets it) and by shading (projected along the sun), so drifting cloud shadows cross the island under the clouds that cast them. `--hour` swings the sun across the sky, warming and dimming as it drops.
 - **Props.** Palms, bushes, flowers, houses and a tower, all built from the same handful of mesh primitives, with collision shapes for the camera and the player.
@@ -112,7 +113,7 @@ All code lives in `Sources/OpenWorld/`:
 
 ## Status
 
-Early prototype, `v1.0`. The look-and-feel milestone is complete — terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows and a time-of-day parameter — and character work is nearly there: movement feel, camera polish, a slope limit with sliding, and a rigged character with per-state animation. Footstep particles are the last item, then world content.
+Early prototype, `v1.0`. Two milestones are complete: look and feel (terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day) and character and movement (jump feel, camera polish, a 45° slope limit with sliding, a rigged character with per-state animation, ground-contact particles). Next is the water-jet mechanic, then world content.
 
 The repository is not a complete game — there is no goal, no saving, and no audio.
 
