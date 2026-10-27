@@ -1,0 +1,497 @@
+/// Metal shader source, compiled at launch so the package builds with plain `swift build`.
+enum Shaders {
+    static let source = #"""
+    #include <metal_stdlib>
+    using namespace metal;
+
+    constant float EXTENT = \#(World.extent);
+    constant float SHADOW_TEXELS = \#(Float(Renderer.shadowMapSize));
+    constant float2 PLAZA = float2(\#(World.plazaCenter.x), \#(World.plazaCenter.y));
+    constant float PLAZA_R = \#(World.plazaRadius);
+
+    constant float3 HORIZON = float3(0.80, 0.94, 1.0);
+    constant float3 ZENITH = float3(0.10, 0.44, 0.93);
+    constant float3 SUNCOL = float3(1.0, 0.95, 0.80);
+
+    struct Frame {
+        float4x4 viewProj;
+        float4x4 invViewProj;
+        float4 cam;   // xyz position, w time
+        float4 sun;   // xyz direction towards the sun
+        float4x4 lightViewProj;
+    };
+
+    struct Obj {
+        float4x4 model;
+        float4x4 normalMat;
+        float4 tint;
+    };
+
+    float hash21(float2 p) {
+        p = fract(p * float2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+    }
+
+    float vnoise(float2 p) {
+        float2 i = floor(p), f = fract(p);
+        float2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash21(i), hash21(i + float2(1, 0)), u.x),
+                   mix(hash21(i + float2(0, 1)), hash21(i + float2(1, 1)), u.x), u.y);
+    }
+
+    float fbm(float2 p) {
+        float s = 0.0, a = 0.5;
+        for (int i = 0; i < 5; i++) {
+            s += a * vnoise(p);
+            p = p * 2.03 + 7.1;
+            a *= 0.5;
+        }
+        return s / 0.96875;
+    }
+
+    /// Value noise that fades to its mean (0.5) once it gets finer than a pixel,
+    /// so distant ground detail dissolves instead of shimmering.
+    float aaNoise(float2 p, float freq, float foot) {
+        return mix(0.5, vnoise(p * freq), saturate(1.0 - foot * freq * 1.2));
+    }
+
+    // ---- Underwater ---------------------------------------------------------
+
+    constant float3 UWDEEP = float3(0.025, 0.24, 0.36);
+    constant float3 UWSURF = float3(0.10, 0.50, 0.60);
+    /// Everything decays toward this with distance. It must be the same for the
+    /// water surface and the seabed, or the far waterline reads as a dark bar.
+    constant float3 UWFOG = float3(0.05, 0.38, 0.50);
+
+    /// 0 above water, 1 below, crossfaded over a short band so the moment the
+    /// camera breaks the surface is not a hard cut.
+    float uwAmount(float camY) {
+        return smoothstep(0.30, -0.10, camY);
+    }
+
+    /// Sunlight refracted through the rippling surface: a web of bright filaments.
+    float caustics(float2 p, float t) {
+        float2 q = p * 0.75;
+        float a = vnoise(q + float2(t * 0.21, t * 0.16));
+        float b = vnoise(q * 1.9 + float2(-t * 0.18, t * 0.25));
+        return pow(saturate(1.0 - abs(a - b)), 6.0);
+    }
+
+    float3 skyColor(float3 d, float3 sunDir, float time) {
+        float h = saturate(d.y);
+        float3 c = mix(HORIZON, ZENITH, pow(h, 0.55));
+        float sd = saturate(dot(d, sunDir));
+        c += SUNCOL * (pow(sd, 700.0) * 5.0 + pow(sd, 10.0) * 0.18);
+        if (d.y > 0.01) {
+            float2 uv = d.xz / (d.y + 0.15) * 1.6 + float2(time * 0.012, 0.0);
+            float n = fbm(uv * 1.2);
+            float cl = smoothstep(0.52, 0.80, n);
+            float fade = smoothstep(0.0, 0.22, d.y);
+            float3 cc = mix(float3(0.80, 0.87, 0.97), float3(1.0), smoothstep(0.5, 0.92, n));
+            c = mix(c, cc, cl * fade * 0.95);
+        }
+        return c;
+    }
+
+    float3 applyFog(float3 c, float3 wp, float3 cam) {
+        float d = distance(wp, cam);
+        float f = 1.0 - exp(-d * 0.0035);
+        float3 lit = mix(c, HORIZON, f);
+        float uw = uwAmount(cam.y);
+        if (uw > 0.0) {
+            // Water absorbs red first and swallows distance far faster than air.
+            lit = mix(lit, UWFOG, (1.0 - exp(-d * 0.065)) * uw);
+        }
+        return lit;
+    }
+
+    // ---- Sky ----------------------------------------------------------------
+
+    struct SkyOut {
+        float4 pos [[position]];
+        float2 ndc;
+    };
+
+    vertex SkyOut vs_sky(uint vid [[vertex_id]]) {
+        float2 p = float2((vid << 1) & 2, vid & 2);
+        SkyOut o;
+        o.pos = float4(p * 2.0 - 1.0, 1.0, 1.0);
+        o.ndc = p * 2.0 - 1.0;
+        return o;
+    }
+
+    fragment float4 fs_sky(SkyOut in [[stage_in]], constant Frame& f [[buffer(1)]]) {
+        float4 w = f.invViewProj * float4(in.ndc, 1.0, 1.0);
+        float3 dir = normalize(w.xyz / w.w - f.cam.xyz);
+        float3 c = skyColor(dir, normalize(f.sun.xyz), f.cam.w);
+        // Submerged, the water surface geometry covers everything above the
+        // horizon, so this only shows where a downward ray misses the terrain:
+        // the open water below.
+        float uw = uwAmount(f.cam.y);
+        if (uw > 0.0) {
+            // Open water below the horizon has to match UWFOG exactly, or the
+            // sliver where a ray grazes past both the surface and the terrain
+            // shows up as a dark bar; it darkens as the view tips downward.
+            float3 deep = UWFOG * (1.0 - 0.30 * saturate(-dir.y));
+            c = mix(c, deep, uw);
+        }
+        return float4(c, 1.0);
+    }
+
+    // ---- Terrain, props and characters ----------------------------------------
+
+    struct VIn {
+        float4 pos [[attribute(0)]];
+        float4 nrm [[attribute(1)]];
+        float4 col [[attribute(2)]];
+    };
+
+    struct VOut {
+        float4 pos [[position]];
+        float3 wp;
+        float3 n;
+        float4 col;
+        float trans;
+    };
+
+    vertex VOut vs_main(VIn in [[stage_in]], constant Frame& f [[buffer(1)]], constant Obj& o [[buffer(2)]]) {
+        float4 wp = o.model * float4(in.pos.xyz, 1.0);
+        VOut r;
+        r.pos = f.viewProj * wp;
+        r.wp = wp.xyz;
+        r.n = normalize((o.normalMat * float4(in.nrm.xyz, 0.0)).xyz);
+        r.col = in.col * o.tint;
+        r.trans = in.nrm.w;
+        return r;
+    }
+
+    // Depth-only shadow caster.
+    struct ShadowOut {
+        float4 pos [[position]];
+    };
+
+    vertex ShadowOut vs_shadow(VIn in [[stage_in]], constant Frame& f [[buffer(1)]], constant Obj& o [[buffer(2)]]) {
+        float4 wp = o.model * float4(in.pos.xyz, 1.0);
+        ShadowOut r;
+        r.pos = f.lightViewProj * wp;
+        return r;
+    }
+
+    fragment float4 fs_main(VOut in [[stage_in]], constant Frame& f [[buffer(1)]], depth2d<float> shadowMap [[texture(1)]]) {
+        float3 Ng = normalize(in.n);
+        float3 V = normalize(f.cam.xyz - in.wp);
+        float3 L = normalize(f.sun.xyz);
+        float3 albedo = in.col.rgb;
+
+        if (in.col.a < 0.75) {
+            float pd = length(in.wp.xz - PLAZA);
+            if (pd < PLAZA_R) {
+                float2 g = in.wp.xz / 2.0;
+                float2 cell = floor(g);
+                float chk = fmod(abs(cell.x + cell.y), 2.0);
+                albedo = mix(float3(0.97, 0.90, 0.74), float3(0.94, 0.66, 0.38), chk);
+                // Per-tile tone so the floor is not perfectly flat.
+                albedo *= 0.96 + 0.08 * hash21(cell);
+                // Grout, anti-aliased with the pixel footprint so it does not
+                // shimmer into a moire field on the far side of the plaza.
+                float2 fr = fract(g);
+                float2 e = min(fr, 1.0 - fr);
+                float gw = max(fwidth(g.x), fwidth(g.y));
+                float grout = 1.0 - smoothstep(0.018, 0.018 + max(gw, 0.006), min(e.x, e.y));
+                albedo *= 1.0 - 0.16 * grout;
+                albedo *= 1.0 - 0.45 * smoothstep(PLAZA_R - 0.6, PLAZA_R, pd);
+            } else {
+                // Ground detail. The vertex colour already carries the broad
+                // material blend (sand -> grass -> rock, by height then slope);
+                // this only modulates it, so the two blends don't compound.
+                float2 p = in.wp.xz;
+                // Footprint of a pixel in world units. The X and Y derivatives
+                // differ a lot on flat ground seen obliquely, so take the larger
+                // one; summing them faded detail that was still resolvable.
+                float foot = max(max(fwidth(p).x, fwidth(p).y), 0.002);
+                float grassW = smoothstep(1.2, 2.3, in.wp.y);
+                float rockW = 1.0 - smoothstep(0.52, 0.74, Ng.y);
+
+                float big = fbm(p * 0.05 + 11.3);
+                float mid = aaNoise(p, 0.55, foot);
+                float fine = aaNoise(p, 2.8, foot);
+
+                // Grass: broad tonal drift, then grain, warmed where `big` is high
+                // so the hills read as sun-bleached patches rather than flat green.
+                float3 gMul = (0.76 + 0.44 * big) * (0.82 + 0.36 * mid) * (0.90 + 0.20 * fine);
+                gMul *= mix(float3(1.0), float3(1.09, 1.03, 0.88), saturate(big * 1.4 - 0.3));
+
+                // Sand: soft grain plus a shallow dune ripple.
+                float dune = sin(dot(p, float2(0.83, 0.55)) * 2.1 + big * 6.0 + vnoise(p * 0.13) * 4.0);
+                float3 sMul = (0.90 + 0.20 * mid)
+                            * (1.0 + 0.05 * dune * saturate(1.0 - foot * 20.0));
+                // Damp sand near the water line: darker and a touch more saturated.
+                float wet = 1.0 - smoothstep(-0.05, 0.70, in.wp.y);
+                sMul *= mix(float3(1.0), float3(0.78, 0.86, 0.93), wet * 0.85);
+
+                // Rock: broken blotches. Height-based strata were tried and read
+                // as contour lines, so the variation stays 2D and low contrast.
+                float3 rMul = 0.86 + 0.26 * aaNoise(p, 1.1, foot);
+                rMul *= mix(float3(1.0), float3(1.06, 1.0, 0.92), saturate(big * 1.2));
+
+                albedo *= mix(mix(sMul, gMul, grassW), rMul, rockW);
+            }
+        }
+
+        // Shadow mapping with PCF. Receiver-plane offset along the geometric
+        // normal plus a slope-scaled bias kills the acne on flat/lit surfaces.
+        float shadow = 1.0;
+        float3 wpShadow = in.wp + Ng * 0.25;
+        float4 lp = f.lightViewProj * float4(wpShadow, 1.0);
+        if (lp.w > 0.0) {
+            float3 lndc = lp.xyz / lp.w;
+            float2 uv = float2(lndc.x * 0.5 + 0.5, 0.5 - lndc.y * 0.5);
+            if (all(uv >= 0.0) && all(uv <= 1.0)) {
+                float ref = lndc.z - (0.0007 + 0.0015 * (1.0 - saturate(dot(Ng, L))));
+                // Hardware bilinear PCF over a 3x3 grid of 2x2 footprints.
+                constexpr sampler smp(coord::normalized, address::clamp_to_edge,
+                                      filter::linear, compare_func::less_equal);
+                float2 texel = 1.0 / float2(SHADOW_TEXELS);
+                float sum = 0.0;
+                for (int y = -1; y <= 1; y++) {
+                    for (int x = -1; x <= 1; x++) {
+                        sum += shadowMap.sample_compare(smp, uv + float2(float(x), float(y)) * texel, ref);
+                    }
+                }
+                shadow = sum / 9.0;
+            }
+        }
+
+        // Two-sided lighting, blended rather than flipped. A hard flip at
+        // dot(N,V)=0 puts a discontinuity exactly on the line where the ground
+        // is tangent to the view, which shows up as a dotted seam along shores.
+        float side = smoothstep(-0.12, 0.12, dot(Ng, V));
+        float wrap = mix(saturate(dot(-Ng, L) * 0.5 + 0.5), saturate(dot(Ng, L) * 0.5 + 0.5), side);
+        float diff = smoothstep(0.35, 0.80, wrap);
+        float ny = mix(-Ng.y, Ng.y, side);
+        float3 amb = mix(float3(0.82, 0.76, 0.68), float3(0.74, 0.84, 1.0), ny * 0.5 + 0.5);
+        float3 col = albedo * (amb * 0.74 + SUNCOL * diff * 0.58 * shadow);
+        // Thin foliage transmits sunlight: viewing a frond from underneath while
+        // the sun lights its top should glow, not go black.
+        float through = in.trans * saturate(-dot(Ng, V)) * saturate(dot(Ng, L));
+        col += albedo * SUNCOL * through * 0.55;
+        // Caustics on anything below the surface, fading out with depth.
+        float uw = uwAmount(f.cam.y);
+        if (uw > 0.0 && in.wp.y < 0.0 && Ng.y > 0.0) {
+            float cau = caustics(in.wp.xz, f.cam.w);
+            col += SUNCOL * cau * uw * Ng.y * 0.55 * exp(in.wp.y * 0.35) * shadow;
+        }
+        // A little additive sky fill in shade: cool, and it keeps shadowed sand
+        // and grass from going muddy without desaturating the lit areas.
+        col += float3(0.030, 0.050, 0.082) * (1.0 - shadow);
+        float luma = dot(col, float3(0.299, 0.587, 0.114));
+        col = mix(float3(luma), col, 1.12);
+        return float4(applyFog(col, in.wp, f.cam.xyz), 1.0);
+    }
+
+    // ---- Water ----------------------------------------------------------------
+
+    void addWave(thread float3& r, float2 p, float t, float2 dir, float k, float amp) {
+        float ph = dot(dir, p) * k + t * 0.6 * sqrt(9.8 * k);
+        r.x += amp * sin(ph);
+        r.yz += amp * k * cos(ph) * dir;
+    }
+
+    float3 waveLow(float2 p, float t) {
+        float3 r = float3(0.0);
+        addWave(r, p, t, normalize(float2(1.0, 0.3)), 0.45, 0.10);
+        addWave(r, p, t, normalize(float2(-0.4, 1.0)), 0.80, 0.055);
+        addWave(r, p, t, normalize(float2(0.7, 0.7)), 1.30, 0.03);
+        return r;
+    }
+
+    float3 waveHigh(float2 p, float t) {
+        float3 r = float3(0.0);
+        addWave(r, p, t, normalize(float2(-0.9, -0.2)), 2.7, 0.03);
+        addWave(r, p, t, normalize(float2(0.2, -1.0)), 4.6, 0.02);
+        addWave(r, p, t, normalize(float2(0.8, -0.5)), 7.3, 0.012);
+        addWave(r, p, t, normalize(float2(-0.5, 0.8)), 11.0, 0.007);
+        return r;
+    }
+
+    struct WOut {
+        float4 pos [[position]];
+        float3 wp;
+    };
+
+    vertex WOut vs_water(uint vid [[vertex_id]],
+                         const device float2* grid [[buffer(0)]],
+                         constant Frame& f [[buffer(1)]],
+                         constant Obj& o [[buffer(2)]]) {
+        float2 xz = grid[vid] + o.tint.xy;
+        float fade = saturate(1.0 - distance(xz, f.cam.xz) / 300.0);
+        float3 w = waveLow(xz, f.cam.w);
+        WOut r;
+        r.wp = float3(xz.x, w.x * fade, xz.y);
+        r.pos = f.viewProj * float4(r.wp, 1.0);
+        return r;
+    }
+
+    fragment float4 fs_water(WOut in [[stage_in]],
+                             constant Frame& f [[buffer(1)]],
+                             texture2d<float> hmap [[texture(0)]]) {
+        constexpr sampler s(filter::linear, address::clamp_to_edge);
+        float t = f.cam.w;
+        float dist = distance(in.wp, f.cam.xyz);
+        float3 V = normalize(f.cam.xyz - in.wp);
+        float3 L = normalize(f.sun.xyz);
+
+        float3 wv = waveLow(in.wp.xz, t) + waveHigh(in.wp.xz, t);
+        float calm = saturate((dist - 40.0) / 260.0);
+        float2 slope = wv.yz * 1.5 * (1.0 - 0.8 * calm);
+        float3 N = normalize(float3(-slope.x, 1.0, -slope.y));
+
+        float2 uv = (in.wp.xz + EXTENT) / (2.0 * EXTENT);
+        float ground = hmap.sample(s, uv).r;
+        float depth = max(in.wp.y - ground, 0.0);
+
+        float shallow = exp(-depth * 0.30);
+        float3 deepC = float3(0.02, 0.27, 0.62);
+        float3 shalC = float3(0.10, 0.88, 0.82);
+        float3 base = mix(deepC, shalC, shallow);
+
+        float3 R = reflect(-V, N);
+        R.y = abs(R.y);
+        float3 refl = skyColor(R, L, t);
+        float fres = 0.05 + 0.95 * pow(1.0 - saturate(dot(N, V)), 5.0);
+        float3 col = mix(base, refl, clamp(fres * 1.15, 0.0, 0.85));
+
+        float3 H = normalize(L + V);
+        col += SUNCOL * pow(saturate(dot(N, H)), 350.0) * 2.2;
+
+        // Shadows are intentionally not applied to the water surface: at grazing
+        // angles the shadow-map texel footprint blows up and the island's terrain
+        // silhouette shows up as hard-edged bands offshore.
+
+        // Wide, gentle shore: foam at the waterline, then a translucent turquoise
+        // shelf before the water turns opaque. A steep alpha ramp here is what
+        // turned the shallows into a hard cut with a dark seam at the sand.
+        float wob = 0.25 * sin(t * 1.3 + in.wp.x * 0.15) + 0.1 * sin(t * 2.1);
+        float fo = smoothstep(0.85 + wob, 0.0, depth);
+        float breakup = vnoise(in.wp.xz * 2.2 + float2(t * 0.25, 0.0));
+        fo *= smoothstep(0.25, 0.65, breakup + 0.55 * fo);
+        col = mix(col, float3(1.0), fo * 0.9);
+
+        float alpha = saturate(0.20 + depth * 0.30);
+        alpha = max(alpha, fo * 0.92);
+
+        // Seen from below the surface: a bright rippling ceiling inside the Snell
+        // window (~49 degrees from vertical), and total internal reflection makes
+        // the grazing view a dark mirror of the water instead.
+        float uw = uwAmount(f.cam.y);
+        if (uw > 0.0) {
+            float3 toSurf = normalize(in.wp - f.cam.xyz);
+            float3 surfN = normalize(float3(-slope.x * 2.2, 1.0, -slope.y * 2.2));
+            float window = smoothstep(0.58, 0.78, saturate(dot(toSurf, surfN)));
+            float3 ceilCol = mix(skyColor(float3(0.0, 1.0, 0.0), L, t), float3(0.72, 0.95, 1.0), 0.35);
+            float3 under = mix(UWDEEP * 1.6, ceilCol, window);
+            col = mix(col, under, uw);
+            alpha = mix(alpha, 1.0, uw);
+        }
+        return float4(applyFog(col, in.wp, f.cam.xyz), alpha);
+    }
+
+    // ---- Bloom + tone mapping ------------------------------------------------
+
+    struct PostOut {
+        float4 pos [[position]];
+        float2 uv;
+    };
+
+    vertex PostOut vs_post(uint vid [[vertex_id]], const device float2* quad [[buffer(0)]]) {
+        float2 p = quad[vid];
+        PostOut o;
+        o.pos = float4(p, 0.0, 1.0);
+        o.uv = float2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+        return o;
+    }
+
+    /// Threshold + soft knee so only genuinely bright pixels bloom.
+    fragment float4 fs_bloom_extract(PostOut in [[stage_in]],
+                                     texture2d<float> src [[texture(0)]]) {
+        constexpr sampler s(filter::linear, address::clamp_to_edge);
+        float3 c = src.sample(s, in.uv).rgb;
+        float lum = dot(c, float3(0.2126, 0.7152, 0.0722));
+        float knee = 0.5;
+        float thresh = 1.0;
+        float soft = saturate((lum - thresh + knee) / (2.0 * knee));
+        soft = soft * soft * knee;
+        float contrib = max(soft, lum - thresh) / max(lum, 1e-4);
+        return float4(c * contrib, 1.0);
+    }
+
+    /// Separable 9-tap Gaussian; direction is horizontal by default.
+    float3 blurTapW(PostOut in, texture2d<float> src, sampler s, float2 texelSize, float2 dir, float w) {
+        return src.sample(s, in.uv + dir * texelSize * w).rgb;
+    }
+
+    fragment float4 fs_bloom_blur_h(PostOut in [[stage_in]],
+                                    texture2d<float> src [[texture(0)]],
+                                    constant float2& texelSize [[buffer(0)]]) {
+        constexpr sampler s(filter::linear, address::clamp_to_edge);
+        float2 d = float2(1.0, 0.0);
+        float3 c = float3(0.0);
+        c += blurTapW(in, src, s, texelSize, d, -4.0) * 0.0162;
+        c += blurTapW(in, src, s, texelSize, d, -3.0) * 0.0540;
+        c += blurTapW(in, src, s, texelSize, d, -2.0) * 0.1216;
+        c += blurTapW(in, src, s, texelSize, d, -1.0) * 0.1946;
+        c += blurTapW(in, src, s, texelSize, d,  0.0) * 0.2270;
+        c += blurTapW(in, src, s, texelSize, d,  1.0) * 0.1946;
+        c += blurTapW(in, src, s, texelSize, d,  2.0) * 0.1216;
+        c += blurTapW(in, src, s, texelSize, d,  3.0) * 0.0540;
+        c += blurTapW(in, src, s, texelSize, d,  4.0) * 0.0162;
+        return float4(c, 1.0);
+    }
+
+    fragment float4 fs_bloom_blur_v(PostOut in [[stage_in]],
+                                    texture2d<float> src [[texture(0)]],
+                                    constant float2& texelSize [[buffer(0)]]) {
+        constexpr sampler s(filter::linear, address::clamp_to_edge);
+        float2 d = float2(0.0, 1.0);
+        float3 c = float3(0.0);
+        c += blurTapW(in, src, s, texelSize, d, -4.0) * 0.0162;
+        c += blurTapW(in, src, s, texelSize, d, -3.0) * 0.0540;
+        c += blurTapW(in, src, s, texelSize, d, -2.0) * 0.1216;
+        c += blurTapW(in, src, s, texelSize, d, -1.0) * 0.1946;
+        c += blurTapW(in, src, s, texelSize, d,  0.0) * 0.2270;
+        c += blurTapW(in, src, s, texelSize, d,  1.0) * 0.1946;
+        c += blurTapW(in, src, s, texelSize, d,  2.0) * 0.1216;
+        c += blurTapW(in, src, s, texelSize, d,  3.0) * 0.0540;
+        c += blurTapW(in, src, s, texelSize, d,  4.0) * 0.0162;
+        return float4(c, 1.0);
+    }
+
+    /// Highlight-only tone curve: identity below the knee, smooth compression above.
+    /// Keeps the hand-authored display-space colours intact and only rolls off HDR.
+    float3 tonemapKnee(float3 x) {
+        const float knee = 0.86;
+        float3 over = max(x - knee, 0.0);
+        return min(x, knee) + over / (1.0 + over * 1.5);
+    }
+
+    fragment float4 fs_bloom_composite(PostOut in [[stage_in]],
+                                       texture2d<float> scene [[texture(0)]],
+                                       texture2d<float> bloom [[texture(1)]]) {
+        constexpr sampler s(filter::linear, address::clamp_to_edge);
+        float3 c = scene.sample(s, in.uv).rgb;
+        float3 b = bloom.sample(s, in.uv).rgb;
+        c += b * 0.30;                 // bloom strength
+        // Trim exposure slightly: lit grass and sand sat right at the top of the
+        // curve, which flattened ground detail and blew out the wet sand.
+        c *= 0.92;
+        c = tonemapKnee(c);
+        // Gentle saturation / warm grading for the sunny look.
+        float luma = dot(c, float3(0.299, 0.587, 0.114));
+        c = mix(float3(luma), c, 1.06);
+        c.b *= 0.99;
+        c.r *= 1.01;
+        return float4(saturate(c), 1.0);
+    }
+    """#
+}
