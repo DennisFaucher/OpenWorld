@@ -35,6 +35,10 @@ final class Game {
     static let coyote: Float = 0.12
     /// A jump pressed this far ahead of landing is remembered.
     static let jumpBufferTime: Float = 0.12
+    /// Ground steeper than this (normal.y, i.e. cos 45°) cannot be stood on.
+    static let walkSlopeY: Float = 0.7071
+    static let slideAccel: Float = 34
+    static let slideDrag: Float = 2.0
 
     let obstacles: [Obstacle]
 
@@ -126,7 +130,18 @@ final class Game {
         }
         let accel: Float = (onGround || swimming) ? 14 : 4
         var hv = V2(vel.x, vel.z)
-        hv += (V2(dir.x, dir.z) * maxSpeed - hv) * min(1, accel * dt)
+        // Loose footing. On ground steeper than the walk limit there is no
+        // traction at all, so the slope wins and the player slides down the fall
+        // line whatever the stick says.
+        let nHere = World.normal(pos.x, pos.z)
+        let sliding = onGround && !swimming && nHere.y < Game.walkSlopeY
+        if sliding {
+            let dl = max(sqrt(nHere.x * nHere.x + nHere.z * nHere.z), 1e-5)
+            hv += V2(nHere.x, nHere.z) / dl * (Game.slideAccel * dt)
+            hv *= max(0, 1 - Game.slideDrag * dt)
+        } else {
+            hv += (V2(dir.x, dir.z) * maxSpeed - hv) * min(1, accel * dt)
+        }
 
         // Jumping. Coyote time keeps a jump alive for a moment after walking off
         // a ledge and the buffer remembers a press made just before landing, so
@@ -168,6 +183,23 @@ final class Game {
         }
         resolveObstacles(&np)
 
+        // The vertical snap below lifts the player onto whatever is under them,
+        // so without this any face is climbable, however steep. Strip the uphill
+        // part of a step into ground past the walk limit and keep the component
+        // that runs along the contour.
+        let nDest = World.normal(np.x, np.z)
+        if nDest.y < Game.walkSlopeY && World.height(np.x, np.z) > pos.y - 0.05 {
+            let ux = -nDest.x, uz = -nDest.z
+            let ul = sqrt(ux * ux + uz * uz)
+            if ul > 1e-5 {
+                let up = ((np.x - pos.x) * ux + (np.z - pos.z) * uz) / ul
+                if up > 0 {
+                    np.x -= ux / ul * up
+                    np.z -= uz / ul * up
+                }
+            }
+        }
+
         // Vertical: gravity, buoyancy in deep water, terrain snap.
         let g = World.height(np.x, np.z)
         let deep = g < -1.1
@@ -191,7 +223,7 @@ final class Game {
             np.y = g
             vel.y = 0
             onGround = true
-        } else if onGround && vel.y <= 0 && np.y - g < 0.35 {
+        } else if onGround && vel.y <= 0 && np.y - g < (sliding ? 0.9 : 0.35) {
             np.y = g
             vel.y = 0
         } else {

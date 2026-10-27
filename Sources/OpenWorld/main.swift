@@ -18,6 +18,33 @@ func argValues(_ name: String, _ count: Int) -> [Float]? {
     return (1...count).compactMap { Float(args[j + $0]) }
 }
 
+/// `--slope-scan` histograms the terrain gradient, which is how the walk limit
+/// was picked: the island tops out around 65 deg, so 45 deg keeps the mountain
+/// climbable while leaving the rocky outcrops as slides.
+if args.contains("--slope-scan") {
+    var hist = [Int](repeating: 0, count: 14)
+    var worst: Float = 0
+    var worstAt = V2.zero
+    var steep = 0
+    var cells = 0
+    for z in stride(from: -110, through: 110, by: 1) {
+        for x in stride(from: -110, through: 110, by: 1) {
+            let deg = acos(clampf(World.normal(Float(x), Float(z)).y, -1, 1)) * 180 / Float.pi
+            if deg > worst { worst = deg; worstAt = V2(Float(x), Float(z)) }
+            if deg > 45 { steep += 1 }
+            hist[min(13, Int(deg / 5))] += 1
+            cells += 1
+        }
+    }
+    for (i, n) in hist.enumerated() where n > 0 {
+        print(String(format: "%3d-%3d deg: %6d", i * 5, i * 5 + 5, n))
+    }
+    print(String(format: "%6d m2 steeper than 45 deg (%.1f%% of the island)",
+                 steep, Float(steep) / Float(cells) * 100))
+    print(String(format: "steepest %.1f deg at (%.0f, %.0f)", worst, worstAt.x, worstAt.y))
+    exit(0)
+}
+
 /// `--sim N [--walk] [--jump F D]` steps the simulation and prints the player
 /// state each frame. Jump timing is the one part of movement feel that a
 /// screenshot cannot show, so it is measured here instead.
@@ -28,6 +55,9 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     if let p = argValues("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], World.height(p[0], p[1]), p[1])
     }
+    if let v = argValues("--yaw", 1) { game.camYaw = v[0] }
+    if let v = argValues("--pitch", 1) { game.camPitch = v[0] }
+    if let v = argValues("--dist", 1) { game.camDist = v[0] }
     if args.contains("--walk") { input.keys.insert(Key.w) }
     if args.contains("--walk-fast") {
         input.keys.insert(Key.w)
@@ -44,7 +74,7 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
             a += 1
         }
     }
-    print("frame       y      vy  ground swim   fov")
+    print("frame       x       y       z      vy  ground swim   fov  slope")
     for f in 0..<frames {
         for s in jumpSpecs where s.at == f {
             input.jumpQueued = true
@@ -52,9 +82,11 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
         }
         for s in jumpSpecs where s.at + s.hold == f { input.keys.remove(Key.space) }
         game.update(dt: 1.0 / 60, input: input)
-        print(String(format: "%5d %7.2f %7.2f %6d %4d %5.1f",
-                     f, game.pos.y, game.vel.y, game.onGround ? 1 : 0, game.swimming ? 1 : 0,
-                     game.fovBoost))
+        let ny = World.normal(game.pos.x, game.pos.z).y
+        print(String(format: "%5d %7.2f %7.2f %7.2f %7.2f %6d %4d %5.1f %6.1f",
+                     f, game.pos.x, game.pos.y, game.pos.z, game.vel.y,
+                     game.onGround ? 1 : 0, game.swimming ? 1 : 0, game.fovBoost,
+                     acos(clampf(ny, -1, 1)) * 180 / Float.pi))
     }
     exit(0)
 }

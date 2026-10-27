@@ -61,8 +61,9 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--hour H` | Time of day, `0`–`24`; `12` (the default) is the original key light |
 | `--walk` | Hold forward for the simulated frames, so wakes and splashes can be checked |
 | `--frames N` | Number of simulation steps before the frame, default `90`; use it to catch a splash mid-air |
-| `--sim N` | Skip rendering and print the player state (y, velocity, grounded, swimming, FOV) for `N` frames — how jump timing was measured |
+| `--sim N` | Skip rendering and print the player state (position, velocity, grounded, swimming, FOV, terrain slope) for `N` frames — how jump timing was measured |
 | `--jump F D` | Only with `--sim`: press jump at frame `F` and hold it for `D` frames. Repeat the flag for several presses |
+| `--slope-scan` | Print a histogram of the terrain gradient — how the 45° walkable limit was picked |
 | `--size W H` | Output resolution, default 1920x1080 |
 
 It runs 90 simulation steps first so physics and the camera settle, then renders one 4x-MSAA frame offscreen.
@@ -77,6 +78,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Sky and time of day.** One cloud layer at a fixed altitude, drawn both by the sky (where the view ray meets it) and by shading (projected along the sun), so drifting cloud shadows cross the island under the clouds that cast them. `--hour` swings the sun across the sky, warming and dimming as it drops.
 - **Props.** Palms, bushes, flowers, houses and a tower, all built from the same handful of mesh primitives, with collision shapes for the camera and the player.
 - **Character.** An original design assembled from spheres, with a walk cycle, jumping, wading and swimming.
+- **Movement.** Variable jump height with coyote time and input buffering, sprinting, wading and swimming. Ground steeper than 45° can't be walked up — the player slides down the fall line instead, whatever the stick says.
 - **Lighting.** A 4096x4096 directional shadow map with hardware PCF, hemispheric ambient with a baked contact shadow where walls meet the ground, plus HDR rendering with bloom and a highlight-only tone curve.
 - **Camera.** Orbit with collision against terrain and props.
 

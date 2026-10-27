@@ -79,13 +79,16 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
 - [x] Proper movement feel: variable jump height, coyote time, jump buffering, heavier falling
   - Variable height cuts `vel.y` by 0.42 on release, so a tap is a 0.58 m hop and a hold is a 2.43 m jump off the same button. Coyote (0.12 s) and the buffer (0.12 s) cover presses made just after leaving / just before landing, and falling uses 42 m/s² against 30 rising so the arc does not float.
   - Measured with `--sim`: apex 2.43 m held vs 0.58 m tapped, 0.70 s of air, and a press 0.07 s before touchdown fires on the landing frame instead of being swallowed.
-  - **Coyote time is currently unreachable in play.** The terrain snap re-glues the player to any slope that drops under 0.35 m per frame, so walking off a ledge never produces an airborne frame. It is correct code waiting for slope handling below.
+  - **Coyote time is barely exercised.** Slope handling below removed the worst of the glue, and walking off the rocky outcrop does now produce airborne frames, but every drop on this island ends in the sea within a frame or two — and swimming makes jumping legal anyway. The window is real code waiting for cliffs, which M4 brings.
 - [ ] Better character model and animation (idle, run, jump, fall, swim strokes), still original design
 - [ ] Footstep dust / sand / water splash particles
 - [x] Camera polish: auto-recenter behind movement, look-ahead, FOV kick while running
   - Look-ahead offsets the boom pivot along the run by up to 1.0 m, faded out as the camera pulls in. Auto-recenter only runs after 1.2 s without camera input and only while pushing forward — recentring during a strafe would rotate the frame the strafe is measured in. The FOV kick is +3.6° at a sprint, eased in over about half a second.
   - Chasing the look-ahead turned up a real bug: the boom floor was 1.5 m, but the pivot is pushed forward, so a pulled-in camera sat inside the player's head (reproduce with `--walk-fast` from the spawn, frame 60). The floor is now 2.2 m and the look-ahead fades below 2.5 m.
-- [ ] Slope handling: slide on steep slopes instead of walking up cliffs
+- [x] Slope handling: slide on steep slopes instead of walking up cliffs
+  - The vertical snap lifted the player onto whatever was under them, so any face was climbable at full speed. A step into ground past the walk limit now keeps only the component that runs along the contour, and standing on such ground removes traction entirely: `Game.slideAccel` 34 m/s² down the fall line against `slideDrag` 2/s, whatever the input says.
+  - 45° (`Game.walkSlopeY`) is measured rather than guessed — `--slope-scan` histograms the terrain gradient. The island peaks at 65° around the rocky outcrop at (55, -38); 1% of the sampled area is past 45°, and the mountain flank tops out at 44°, so the one landmark stays climbable.
+  - Verified headlessly: walking west into the outcrop from the shore climbs 38° → 45° and then stops advancing in x, sliding along the face instead; starting on a 54° patch with forward held slides down the fall line from y 3.27 to the waterline, `grounded` never dropping; the 44° mountain flank still walks at full pace.
 
 ### M3: "Spray pack" mechanic (original water-jet tool)
 - [ ] Hold-to-spray with a GPU particle system (spray arc, splash on impact, tint decals)
