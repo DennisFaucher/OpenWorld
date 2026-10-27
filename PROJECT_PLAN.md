@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v2.0 released — M1 (look and feel) and M2 (character and movement) complete, M3 (spray pack) in progress: the jet is in, the tank and the washable targets are next
+## Status: v2.0 released — M1 (look and feel), M2 (character and movement) and M3 (spray pack) complete; M4 next
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -18,7 +18,7 @@ Done and verified via headless renders (live input only smoke-tested):
 - [x] Player: original character from sphere parts, walk cycle, blob shadow, wading, swimming (buoyancy)
 - [x] Physics: gravity, jump, run, terrain snapping, world bounds, circle/AABB obstacle push-out
 - [x] Orbit camera with mouse (captured), arrow keys, gamepad; collision against terrain and obstacles
-- [x] Spray pack: water jet fired along the camera, splash on impact, wet patches that dry, aim pose
+- [x] Spray pack: water jet fired along the camera, splash on impact, wet patches that dry, aim pose, hover thrust on a refillable tank, washable goo splats
 - [x] Headless `--shot` renderer for visual verification
 
 ## Known issues / rough edges
@@ -106,8 +106,10 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
 ### M3: "Spray pack" mechanic (original water-jet tool)
 - [x] Hold-to-spray water jet: nozzle in the right hand, ballistic stream cut at the impact, splash, and a wet patch that dries (`Spray.swift`)
   - Particles stayed on the CPU. The plan said GPU, but at ~1200 live droplets the integration is a fraction of a millisecond and the billboard expansion was the only real cost, so the existing path was kept and the pool raised from 600 to 2400. A compute system only pays off an order of magnitude above this.
-- [ ] Hover/boost variant with a limited tank that refills in water
-- [ ] Interactable targets (e.g. wash away goo/graffiti decals on terrain/walls)
+- [x] Hover variant with a limited tank that refills in water
+  - Thrust only above 42 m/s², the falling gravity, or the pack cannot break contact with the ground at all; the climb rate is capped so it reads as a hover rather than a launch. The tank lasts ~3.3 s of spray (`0.30`/s drain) and refills at `0.55`/s while swimming or wading, with a 25% re-arm threshold so the jet does not stutter at empty. The tank mesh shrinks with the level: it is the only readout without a HUD.
+- [x] Interactable targets: twelve goo splats on the plaza and the paths that the jet washes away
+  - Ground only. Splats are lobed quads drawn in the particle buffer (`kind` 5), shrinking as their health drops; the splash is tinted green while a splat is being washed. Walls would need a second quad orientation and are left for later.
 
 ### M4: World scale and streaming
 - [ ] Move from one 240-unit island to an archipelago: chunked terrain with LOD and frustum culling

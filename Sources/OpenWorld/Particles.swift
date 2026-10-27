@@ -97,8 +97,8 @@ final class ParticleSystem {
     /// The stream itself: fast droplets in a narrow cone, stretched along their
     /// travel by the renderer. Emitted by rate, not per frame, so the density
     /// does not depend on frame time.
-    func jet(from o: V3, dir: V3, life: Float, dt: Float) {
-        jetAccum += dt * 2400
+    func jet(from o: V3, dir: V3, life: Float, dt: Float, rate: Float) {
+        jetAccum += dt * 2400 * rate
         var n = Int(jetAccum)
         jetAccum -= Float(n)
         n = min(n, 48)
@@ -118,7 +118,7 @@ final class ParticleSystem {
     }
 
     /// Water hitting something: droplets thrown off the surface.
-    func impact(at p: V3, normal: V3, dt: Float) {
+    func impact(at p: V3, normal: V3, dt: Float, tint: V3 = V3(0.90, 0.97, 1.0)) {
         hitAccum += dt * 200
         var n = Int(hitAccum)
         hitAccum -= Float(n)
@@ -130,7 +130,7 @@ final class ParticleSystem {
                          vel: normal * Float.random(in: 1.6 ... 4.6) + tang * Float.random(in: 0.25 ... 1.0),
                          life: Float.random(in: 0.16 ... 0.38), maxLife: 0.38,
                          size: Float.random(in: 0.024 ... 0.048),
-                         tint: V3(0.90, 0.97, 1.0),
+                         tint: tint,
                          gravity: 14, drag: 1.2))
         }
     }

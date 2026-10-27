@@ -479,7 +479,14 @@ enum Shaders {
         float d = length(in.uv);
         if (d > 1.0) { discard_fragment(); }
         float a = in.col.a * smoothstep(1.0, 0.45, d);
-        if (in.kind > 3.5) {
+        if (in.kind > 4.5) {
+            // Goo: a lobed splat with a ragged rim, so it reads as something
+            // stuck to the ground rather than as a shadow.
+            float n = vnoise(in.wp.xz * 4.0) * 0.55 + vnoise(in.wp.xz * 11.0 + 2.7) * 0.45;
+            float th = atan2(in.uv.y, in.uv.x);
+            float rr = d / (0.78 + 0.22 * sin(th * 3.0 + n * 6.2831));
+            a *= smoothstep(1.0, 0.80, rr);
+        } else if (in.kind > 3.5) {
             // Wet ground: no internal breakup, because water soaks in evenly,
             // but the rim wobbles with noise. A clean ellipse reads as a shadow.
             float n = vnoise(in.wp.xz * 6.0) * 0.6 + vnoise(in.wp.xz * 15.0 + 7.3) * 0.4;

@@ -68,7 +68,7 @@ enum Player {
     static let straw = V3(0.97, 0.86, 0.48)
     static let band = V3(0.90, 0.25, 0.25)
     static let dark = V3(0.10, 0.08, 0.09)
-    static let tank = V3(0.28, 0.60, 0.66)
+    static let tankColour = V3(0.28, 0.60, 0.66)
     static let tankBand = V3(0.15, 0.30, 0.34)
 
     /// Character states. Blending weights between them rather than the joint
@@ -243,7 +243,7 @@ enum Player {
         return p
     }
 
-    static func parts(_ p: PlayerPose, pos: V3, facing: Float) -> [(M4, V3)] {
+    static func parts(_ p: PlayerPose, pos: V3, facing: Float, tank: Float = 1) -> [(M4, V3)] {
         var out: [(M4, V3)] = []
         func add(_ m: M4, _ c: V3) { out.append((m, c)) }
 
@@ -280,15 +280,18 @@ enum Player {
 
         // The spray pack: a tank on the back and a nozzle in the right hand,
         // built from the same spheres as the body so it needs no new pass.
-        let pack = torso * M4.translation(V3(0, 0.24, -0.31))
-        add(pack * M4.scale(V3(0.20, 0.27, 0.135)), tank)
+        // The tank empties from the bottom, so its level doubles as the only
+        // readout the player gets without a HUD.
+        let level = 0.55 + 0.45 * clampf(tank, 0, 1)
+        let pack = torso * M4.translation(V3(0, 0.24 - 0.27 * (1 - level) * 0.5, -0.31))
+        add(pack * M4.scale(V3(0.20, 0.27 * level, 0.135)), tankColour)
         add(pack * M4.translation(V3(0, -0.07, -0.02)) * M4.scale(V3(0.205, 0.045, 0.14)), tankBand)
         let armR = torso * M4.translation(V3(shoulderX, shoulderY, 0))
             * M4.rotationZ(p.outR) * M4.rotationX(-p.shoulderR)
         let foreR = armR * M4.translation(V3(0, -upperArm, 0)) * M4.rotationX(-p.elbowR)
         let hand = foreR * M4.translation(V3(0, -foreArm - 0.02, 0))
         add(hand * M4.translation(V3(0, -0.09, 0)) * M4.scale(V3(0.042, 0.14, 0.042)), tankBand)
-        add(hand * M4.translation(V3(0, -0.20, 0)) * M4.scale(V3(0.062, 0.055, 0.062)), tank)
+        add(hand * M4.translation(V3(0, -0.20, 0)) * M4.scale(V3(0.062, 0.055, 0.062)), tankColour)
 
         for sx: Float in [-1, 1] {
             let hip = sx < 0 ? p.hipL : p.hipR

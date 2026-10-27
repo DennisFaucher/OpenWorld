@@ -59,11 +59,19 @@ final class Game {
     /// Wet patches left by the jet, oldest first. Capped, so a long spray
     /// overwrites the driest patch rather than growing without bound.
     var decals: [Decal] = []
+    /// Goo splats, in the order they were placed. Washed ones are removed.
+    var goos: [Goo] = []
     var spraying = false
     /// Eases the aiming pose in and out, so the arm does not snap up.
     var sprayBlend: Float = 0
-    /// Last aim direction, kept between frames for the pose and the body turn.
+    /// Last aim direction and nozzle position, shared by the stream, the thrust
+    /// and the pose so they cannot disagree.
     var aimDir = V3(0, 0, 1)
+    var aimOrigin = V3.zero
+    /// Water left in the pack, 1 = full. The jet empties it and water refills
+    /// it; `tankDry` keeps it off until there is enough for another burst.
+    var tank: Float = 1
+    var tankDry = false
     /// Blend weights per `Player.State` (same order: idle first), eased so a
     /// state change does not pop.
     var poseWeights: [Float] = [1, 0, 0, 0, 0, 0]
@@ -95,6 +103,10 @@ final class Game {
 
     init(obstacles: [Obstacle]) {
         self.obstacles = obstacles
+        goos = Spray.gooSites.map {
+            Goo(pos: V3($0.x, World.height($0.x, $0.y), $0.y),
+                radius: 0.85 + 0.35 * abs(sin($0.x * 1.7 + $0.y * 0.9)))
+        }
     }
 
     func respawn() {
@@ -127,6 +139,23 @@ final class Game {
         camIdle = camMoved ? 0 : camIdle + dt
         camPitch = clampf(camPitch, -0.55, 1.35)
         if input.down(Key.r) { respawn() }
+
+        // Spray trigger and tank. `swimming` is last frame's, which is all a
+        // refill needs. A dry pack stays off until it has taken on enough water
+        // to be worth firing, so the jet does not stutter at empty.
+        spraying = (input.spray || input.down(Key.f)) && !swimming && !tankDry
+        if spraying {
+            tank -= dt * 0.30
+            // The drain has to be able to reach zero: clamping at 0 each frame
+            // leaves a sliver that keeps the jet sputtering forever.
+            if tank <= 0.001 { tank = 0; tankDry = true; spraying = false }
+            let aim = Spray.aim(self)
+            aimDir = aim.dir
+            aimOrigin = aim.origin
+        } else {
+            if swimming || pos.y < 0.45 { tank = min(1, tank + dt * 0.55) }
+            if tankDry && tank > 0.25 { tankDry = false }
+        }
 
         // Movement input, relative to the camera.
         var mx: Float = (input.down(Key.d) ? 1 : 0) - (input.down(Key.a) ? 1 : 0)
@@ -244,6 +273,20 @@ final class Game {
             vel.y -= (vel.y > 0 ? 30 : 42) * dt
             vel.y = max(vel.y, -48)
         }
+        // Jet thrust. With the nozzle aimed at your feet the stream pushes you
+        // up; easing toward a target climb rate, rather than adding an
+        // acceleration, keeps it a hover instead of a rocket. Ordinary spraying
+        // (aim forward) produces no thrust at all, so the jet stays usable.
+        let downAim = -aimDir.y
+        if spraying && downAim > 0.45 {
+            let t = clampf((downAim - 0.45) / 0.5, 0, 1)
+            // Above 42, the falling gravity, or the pack cannot break contact
+            // with the ground at all; the speed cap keeps it a climb rather
+            // than a launch, and a partial aim only a slow one. The tank ends it.
+            vel.y += (44 + 18 * t) * dt
+            vel.y = min(vel.y, 4.0 * t)
+            onGround = false
+        }
         np.y += vel.y * dt
         if np.y <= g {
             np.y = g
@@ -278,7 +321,6 @@ final class Game {
         // Aiming overrides the right arm and turns the body, so the nozzle and
         // the stream agree even when the feet are running somewhere else. Only
         // the arm is overridden: the legs keep their own motion.
-        spraying = (input.spray || input.down(Key.f)) && !swimming
         sprayBlend += ((spraying ? 1 : 0) - sprayBlend) * min(1, 10 * dt)
         if sprayBlend > 0.01 {
             let ay = atan2(aimDir.x, aimDir.z)
@@ -336,14 +378,17 @@ final class Game {
         // Water jet. A single arc per frame gives the impact point, so the
         // splash and the wet patch land where the stream reads as landing.
         if spraying {
-            let aim = Spray.aim(self)
-            aimDir = aim.dir
-            let hit = Spray.impact(origin: aim.origin, dir: aim.dir, obstacles: obstacles)
-            particles.jet(from: aim.origin, dir: aim.dir,
-                          life: hit.map { $0.time * 1.06 } ?? 1, dt: dt)
+            let hit = Spray.impact(origin: aimOrigin, dir: aimDir, obstacles: obstacles)
+            particles.jet(from: aimOrigin, dir: aimDir,
+                          life: hit.map { $0.time * 1.06 } ?? 1,
+                          dt: dt, rate: 0.35 + 0.65 * tank)
             if let hit = hit {
+                // Washing goo tints the splash, so the spray reads as doing
+                // something even before the splat is gone.
+                let washing = washGoo(at: hit.pos, dt: dt)
                 soak(hit.pos)
-                particles.impact(at: hit.pos, normal: World.normal(hit.pos.x, hit.pos.z), dt: dt)
+                particles.impact(at: hit.pos, normal: World.normal(hit.pos.x, hit.pos.z),
+                                 dt: dt, tint: washing ? V3(0.72, 0.78, 0.42) : V3(0.90, 0.97, 1.0))
             }
         }
         for i in decals.indices { decals[i].age += dt }
@@ -354,6 +399,20 @@ final class Game {
                          feet: V3(pos.x, max(pos.y, 0), pos.z), wading: wading)
 
         updateCamera(dt: dt)
+    }
+
+    /// Wears down any goo under the impact point. Returns whether it hit any.
+    private func washGoo(at p: V3, dt: Float) -> Bool {
+        var washing = false
+        for i in goos.indices {
+            let d = length(V2(goos[i].pos.x - p.x, goos[i].pos.z - p.z))
+            if d < goos[i].radius {
+                goos[i].health -= dt * 0.9
+                washing = true
+            }
+        }
+        goos.removeAll { $0.health <= 0 }
+        return washing
     }
 
     /// Wets the ground at `p`. Holding the jet on one spot grows the patch

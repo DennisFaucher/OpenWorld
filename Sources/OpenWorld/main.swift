@@ -60,6 +60,7 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     if let v = argValues("--pitch", 1) { game.camPitch = v[0] }
     if let v = argValues("--dist", 1) { game.camDist = v[0] }
     if args.contains("--walk") { input.keys.insert(Key.w) }
+    if args.contains("--spray") { input.spray = true }
     if args.contains("--walk-fast") {
         input.keys.insert(Key.w)
         input.keys.insert(Key.shift)
@@ -94,7 +95,7 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     exit(0)
 }
 
-/// `--shot out.png [--pos x z] [--yaw a] [--pitch p] [--dist d] [--time t] [--hour h] [--size w h]`
+/// `--shot out.png [--pos x z] [--yaw a] [--pitch p] [--dist d] [--time t] [--hour h] [--size w h] [--look r] [--look-pitch r]`
 /// renders one frame without opening a window, for quick visual checks.
 if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     let values = argValues
@@ -146,8 +147,9 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     if let v = values("--look", 1) {
         let d = length(game.camPos - game.camTarget)
         let y = game.camYaw + v[0]
+        let p = game.camPitch + (values("--look-pitch", 1)?.first ?? 0)
         game.camPos = game.camTarget
-            + V3(sin(y) * cos(game.camPitch), sin(game.camPitch), cos(y) * cos(game.camPitch)) * d
+            + V3(sin(y) * cos(p), sin(p), cos(y) * cos(p)) * d
     }
     let size = values("--size", 2) ?? [1920, 1080]
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))

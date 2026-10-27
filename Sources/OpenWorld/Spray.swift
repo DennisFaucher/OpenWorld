@@ -9,6 +9,15 @@ struct Decal {
     var life: Float = 9
 }
 
+/// A splat of goo stuck to the ground. The jet washes it away, which is the
+/// only thing in the world to aim at so far.
+struct Goo {
+    var pos: V3
+    var radius: Float
+    /// 1 = untouched, 0 = washed off.
+    var health: Float = 1
+}
+
 /// The water jet. The stream is solved once per frame as a single ballistic arc,
 /// and the particles are only the look of it: the impact point, the splash and
 /// the wet patch then agree with each other instead of every droplet guessing at
@@ -18,6 +27,15 @@ enum Spray {
     /// than a fountain, slow enough that the arc is visible over 10 m.
     static let speed: Float = 26
     static let gravity: Float = 5.5
+
+    /// Goo sits where a player walks into it: the plaza, the paths out to the
+    /// beach, the bell tower approach. Only x and z are given; the height comes
+    /// from the terrain.
+    static let gooSites: [V2] = [
+        V2(-18, 27), V2(-13, 33), V2(-24, 16), V2(-8, 23),
+        V2(-31, 35), V2(-50, 46), V2(-53, 37), V2(5, 50),
+        V2(-1, 17), V2(19, 9), V2(-40, 20), V2(-62, 30),
+    ]
 
     /// Nozzle at the chest, aimed along the camera, so whatever is under the
     /// reticle is what gets wet. The aim deliberately does not use `camPos`:

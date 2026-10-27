@@ -35,6 +35,7 @@ Always use `-c release`. Terrain and prop generation evaluates a few hundred tho
 | `Space` | Jump |
 | Mouse | Orbit the camera (click the window first to capture the cursor) |
 | Left mouse / `F` | Hold to fire the water jet (after the cursor is captured) |
+| Aim down + fire | Lift off on the jet — the pack holds about three seconds of water and refills in the sea |
 | Arrow keys | Orbit the camera |
 | `R` | Respawn |
 | `Esc` | Release the captured cursor |
@@ -78,6 +79,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 
 - **Terrain.** An analytic height function (`World.height`) — value-noise fbm warped into an island profile — sampled into a 240x240 mesh. Sand, grass and rock are blended per vertex by height and slope, with fragment-space detail layered underneath that fades out before it can alias.
 - **Spray pack.** Hold the trigger and the character raises a nozzle and fires a water jet along the camera: a ballistic stream cut off exactly where it lands, a splash at the impact, and a wet patch that dries over a few seconds. The body turns to the jet while the legs keep walking.
+- **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties) and refills when you swim or wade. Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
 - **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, refracted shoreline, and animated foam along the shore. Swimming and wading leave foam and spray behind.
 - **Ground contact.** Every footfall kicks up dust tinted by the ground it came off — sand, dry grass or rock — plus a wider cloud on landing, a skid trail while sliding, and a scuff when you push into a face too steep to climb.
 - **Underwater.** Absorption fog, caustics on submerged surfaces, and the surface seen from below with the Snell window and total internal reflection.

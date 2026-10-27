@@ -502,19 +502,49 @@ final class Renderer: NSObject, MTKViewDelegate {
     private func encodeParticles(_ enc: MTLRenderCommandEncoder, view: M4) {
         let parts = game.particles.parts
         let decals = game.decals
+        let goos = game.goos
         // Below the surface the water plane is opaque and would hide the spray,
         // but it writes no depth, so the pass has to be skipped instead.
-        guard !parts.isEmpty || !decals.isEmpty, game.camPos.y > 0 else { return }
+        guard !parts.isEmpty || !decals.isEmpty || !goos.isEmpty, game.camPos.y > 0 else { return }
         let right = normalize(V3(view.columns.0.x, view.columns.1.x, view.columns.2.x))
         let up = normalize(V3(view.columns.0.y, view.columns.1.y, view.columns.2.y))
 
-        let need = (parts.count + decals.count) * 6
+        let need = (parts.count + decals.count + goos.count) * 6
         if particleVerts.count < need {
             particleVerts = [Vertex](repeating: Vertex(pos: .zero, nrm: .zero, col: .zero),
                                      count: max(need, 6144))
         }
         var n = 0
         let quad = [V2(-1, -1), V2(1, -1), V2(1, 1), V2(-1, -1), V2(1, 1), V2(-1, 1)]
+
+        /// Flat quad on the ground, laid along the surface normal so it reads as
+        /// part of the terrain rather than as a sprite. `kind` picks the mask.
+        func ground(_ pos: V3, radius: Float, kind: Float, colour: V3, alpha: Float) {
+            let nrm = World.normal(pos.x, pos.z)
+            var t = cross(nrm, V3(0, 1, 0))
+            if length(t) < 1e-3 { t = V3(1, 0, 0) }
+            t = normalize(t)
+            let b = normalize(cross(nrm, t))
+            let o = pos + nrm * 0.035
+            let c = V4(colour, alpha)
+            for uv in quad {
+                let off = t * (uv.x * radius) + b * (uv.y * radius)
+                particleVerts[n] = Vertex(pos: V4(o + off, 1), nrm: V4(uv.x, uv.y, kind, 0), col: c)
+                n += 1
+            }
+        }
+
+        // Order matters: nothing here writes depth, so whatever is emitted last
+        // paints over the rest. Goo is in the ground, wet patches lie over it,
+        // and the spray itself is over everything.
+        for g in goos {
+            ground(g.pos, radius: g.radius * (0.45 + 0.55 * clampf(g.health, 0, 1)),
+                   kind: 5, colour: V3(0.30, 0.36, 0.14), alpha: 1)
+        }
+        for d in decals {
+            let fade = 0.32 * min(1, d.age * 20) * clampf((d.life - d.age) / 2.0, 0, 1)
+            ground(d.pos, radius: d.radius, kind: 4, colour: V3(0.22, 0.34, 0.42), alpha: fade)
+        }
         for p in parts {
             // Fade out over the lifetime; foam spreads as it goes, droplets shrink.
             let k = p.life / p.maxLife
@@ -547,23 +577,6 @@ final class Renderer: NSObject, MTKViewDelegate {
             for uv in quad {
                 let off = ax * uv.x + ay * uv.y
                 particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, kind, 0), col: c)
-                n += 1
-            }
-        }
-        // Wet patches go last, flat on the ground and oriented to the surface
-        // normal, so they read as soaked into the terrain rather than as sprites.
-        for d in decals {
-            let nrm = World.normal(d.pos.x, d.pos.z)
-            var t = cross(nrm, V3(0, 1, 0))
-            if length(t) < 1e-3 { t = V3(1, 0, 0) }
-            t = normalize(t)
-            let b = normalize(cross(nrm, t))
-            let o = d.pos + nrm * 0.035
-            let fade = 0.32 * min(1, d.age * 20) * clampf((d.life - d.age) / 2.0, 0, 1)
-            let c = V4(V3(0.22, 0.34, 0.42), fade)
-            for uv in quad {
-                let off = t * (uv.x * d.radius) + b * (uv.y * d.radius)
-                particleVerts[n] = Vertex(pos: V4(o + off, 1), nrm: V4(uv.x, uv.y, 4, 0), col: c)
                 n += 1
             }
         }
@@ -626,7 +639,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func drawPlayer(_ enc: MTLRenderCommandEncoder) {
-        for (model, color) in Player.parts(game.pose, pos: game.pos, facing: game.facing) {
+        for (model, color) in Player.parts(game.pose, pos: game.pos, facing: game.facing, tank: game.tank) {
             drawMesh(enc, sphere, model: model, tint: V4(color, 1))
         }
     }
