@@ -48,7 +48,13 @@ final class GameView: MTKView {
         }
     }
 
-    override func mouseDown(with event: NSEvent) { captureMouse() }
+    /// The first click captures the cursor; after that the left button is the
+    /// spray trigger.
+    override func mouseDown(with event: NSEvent) {
+        if mouseCaptured { input.spray = true } else { captureMouse() }
+    }
+
+    override func mouseUp(with event: NSEvent) { input.spray = false }
 
     override func mouseMoved(with event: NSEvent) { accumulate(event) }
     override func mouseDragged(with event: NSEvent) { accumulate(event) }

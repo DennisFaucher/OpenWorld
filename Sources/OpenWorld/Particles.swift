@@ -23,7 +23,11 @@ final class ParticleSystem {
     private(set) var parts: [Particle] = []
     private var wakeTimer: Float = 0
     private var wadeTimer: Float = 0
-    private static let limit = 600
+    private var jetAccum: Float = 0
+    private var hitAccum: Float = 0
+    /// The jet is the first emitter that needs real numbers: 2400 droplets a
+    /// second with a half-second life is ~1200 live at once.
+    private static let limit = 2400
 
     func clear() { parts.removeAll(keepingCapacity: true) }
 
@@ -87,6 +91,47 @@ final class ParticleSystem {
                          life: Float.random(in: 0.50 ... 0.90), maxLife: 0.90,
                          size: Float.random(in: 0.16 ... 0.30) * s,
                          tint: tint, gravity: 2.2, drag: 2.0, kind: 2))
+        }
+    }
+
+    /// The stream itself: fast droplets in a narrow cone, stretched along their
+    /// travel by the renderer. Emitted by rate, not per frame, so the density
+    /// does not depend on frame time.
+    func jet(from o: V3, dir: V3, life: Float, dt: Float) {
+        jetAccum += dt * 2400
+        var n = Int(jetAccum)
+        jetAccum -= Float(n)
+        n = min(n, 48)
+        // Droplets die at the surface, so the stream ends where it lands.
+        let cap = min(max(life, 0.07), 0.55)
+        for _ in 0..<n {
+            let a = Float.random(in: 0 ..< 2 * Float.pi)
+            let spread = Float.random(in: 0 ... 0.034)
+            let off = V3(cos(a) * spread, Float.random(in: -0.022 ... 0.022), sin(a) * spread)
+            add(Particle(pos: o + off * 0.5,
+                         vel: (dir + off * 1.5) * (Spray.speed * Float.random(in: 0.88 ... 1.08)),
+                         life: cap * Float.random(in: 0.82 ... 1.0), maxLife: cap,
+                         size: Float.random(in: 0.020 ... 0.048),
+                         tint: V3(0.86, 0.95, 1.0),
+                         gravity: Spray.gravity, drag: 0.4, kind: 3))
+        }
+    }
+
+    /// Water hitting something: droplets thrown off the surface.
+    func impact(at p: V3, normal: V3, dt: Float) {
+        hitAccum += dt * 200
+        var n = Int(hitAccum)
+        hitAccum -= Float(n)
+        n = min(n, 24)
+        for _ in 0..<n {
+            let a = Float.random(in: 0 ..< 2 * Float.pi)
+            let tang = V3(cos(a), 0, sin(a))
+            add(Particle(pos: p + normal * 0.03,
+                         vel: normal * Float.random(in: 1.6 ... 4.6) + tang * Float.random(in: 0.25 ... 1.0),
+                         life: Float.random(in: 0.16 ... 0.38), maxLife: 0.38,
+                         size: Float.random(in: 0.024 ... 0.048),
+                         tint: V3(0.90, 0.97, 1.0),
+                         gravity: 14, drag: 1.2))
         }
     }
 

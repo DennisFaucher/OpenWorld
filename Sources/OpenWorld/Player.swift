@@ -68,6 +68,8 @@ enum Player {
     static let straw = V3(0.97, 0.86, 0.48)
     static let band = V3(0.90, 0.25, 0.25)
     static let dark = V3(0.10, 0.08, 0.09)
+    static let tank = V3(0.28, 0.60, 0.66)
+    static let tankBand = V3(0.15, 0.30, 0.34)
 
     /// Character states. Blending weights between them rather than the joint
     /// angles matters: a low-pass on a 2 Hz stride flattens the legs.
@@ -275,6 +277,18 @@ enum Player {
             add(fore * M4.translation(V3(0, -foreArm * 0.5, 0)) * M4.scale(V3(0.088, foreArm * 0.60, 0.088)), skin)
             add(fore * M4.translation(V3(0, -foreArm - 0.02, 0)) * M4.scale(V3(0.092, 0.080, 0.094)), skin)
         }
+
+        // The spray pack: a tank on the back and a nozzle in the right hand,
+        // built from the same spheres as the body so it needs no new pass.
+        let pack = torso * M4.translation(V3(0, 0.24, -0.31))
+        add(pack * M4.scale(V3(0.20, 0.27, 0.135)), tank)
+        add(pack * M4.translation(V3(0, -0.07, -0.02)) * M4.scale(V3(0.205, 0.045, 0.14)), tankBand)
+        let armR = torso * M4.translation(V3(shoulderX, shoulderY, 0))
+            * M4.rotationZ(p.outR) * M4.rotationX(-p.shoulderR)
+        let foreR = armR * M4.translation(V3(0, -upperArm, 0)) * M4.rotationX(-p.elbowR)
+        let hand = foreR * M4.translation(V3(0, -foreArm - 0.02, 0))
+        add(hand * M4.translation(V3(0, -0.09, 0)) * M4.scale(V3(0.042, 0.14, 0.042)), tankBand)
+        add(hand * M4.translation(V3(0, -0.20, 0)) * M4.scale(V3(0.062, 0.055, 0.062)), tank)
 
         for sx: Float in [-1, 1] {
             let hip = sx < 0 ? p.hipL : p.hipR

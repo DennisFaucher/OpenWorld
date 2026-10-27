@@ -6,6 +6,7 @@ enum Key {
     static let a: UInt16 = 0
     static let s: UInt16 = 1
     static let d: UInt16 = 2
+    static let f: UInt16 = 3
     static let r: UInt16 = 15
     static let w: UInt16 = 13
     static let space: UInt16 = 49
@@ -22,6 +23,8 @@ final class Input {
     var mouseDX: Float = 0
     var mouseDY: Float = 0
     var jumpQueued = false
+    /// Held spray trigger. Set by the left mouse button and by `F`.
+    var spray = false
 
     func down(_ k: UInt16) -> Bool { keys.contains(k) }
 }
@@ -53,6 +56,14 @@ final class Game {
     var walkPhase: Float = 0
     var speedNorm: Float = 0
     var time: Float = 0
+    /// Wet patches left by the jet, oldest first. Capped, so a long spray
+    /// overwrites the driest patch rather than growing without bound.
+    var decals: [Decal] = []
+    var spraying = false
+    /// Eases the aiming pose in and out, so the arm does not snap up.
+    var sprayBlend: Float = 0
+    /// Last aim direction, kept between frames for the pose and the body turn.
+    var aimDir = V3(0, 0, 1)
     /// Blend weights per `Player.State` (same order: idle first), eased so a
     /// state change does not pop.
     var poseWeights: [Float] = [1, 0, 0, 0, 0, 0]
@@ -264,6 +275,20 @@ final class Game {
         for i in want.indices { poseWeights[i] += (want[i] - poseWeights[i]) * min(1, 12 * dt) }
         let total = poseWeights.reduce(0, +)
         pose = total > 1e-4 ? Player.pose(weights: poseWeights.map { $0 / total }, self) : Player.pose(.idle, self)
+        // Aiming overrides the right arm and turns the body, so the nozzle and
+        // the stream agree even when the feet are running somewhere else. Only
+        // the arm is overridden: the legs keep their own motion.
+        spraying = (input.spray || input.down(Key.f)) && !swimming
+        sprayBlend += ((spraying ? 1 : 0) - sprayBlend) * min(1, 10 * dt)
+        if sprayBlend > 0.01 {
+            let ay = atan2(aimDir.x, aimDir.z)
+            let d = atan2(sin(ay - facing), cos(ay - facing))
+            facing += d * min(1, 12 * dt) * sprayBlend
+            let local = asin(max(-1, min(1, aimDir.y)))
+            pose.shoulderR += (Float.pi / 2 + local - pose.shoulderR) * sprayBlend
+            pose.elbowR += (0.10 - pose.elbowR) * sprayBlend
+            pose.outR += (0.10 - pose.outR) * sprayBlend
+        }
 
         // Water spray. Wading off the beach is a walk, not a drop: the terrain
         // snap zeroes `vel.y` every frame, so the horizontal speed is what
@@ -308,11 +333,44 @@ final class Game {
             dustTimer = 0.10
             particles.skid(at: pos, dir: -faceDir * 0.5, tint: dustTint(pos), strength: 0.70)
         }
+        // Water jet. A single arc per frame gives the impact point, so the
+        // splash and the wet patch land where the stream reads as landing.
+        if spraying {
+            let aim = Spray.aim(self)
+            aimDir = aim.dir
+            let hit = Spray.impact(origin: aim.origin, dir: aim.dir, obstacles: obstacles)
+            particles.jet(from: aim.origin, dir: aim.dir,
+                          life: hit.map { $0.time * 1.06 } ?? 1, dt: dt)
+            if let hit = hit {
+                soak(hit.pos)
+                particles.impact(at: hit.pos, normal: World.normal(hit.pos.x, hit.pos.z), dt: dt)
+            }
+        }
+        for i in decals.indices { decals[i].age += dt }
+        decals.removeAll { $0.age > $0.life }
+
         let wading = !swimming && onGround && g < -0.1
         particles.update(dt: dt, swimming: swimming, speed: speed,
                          feet: V3(pos.x, max(pos.y, 0), pos.z), wading: wading)
 
         updateCamera(dt: dt)
+    }
+
+    /// Wets the ground at `p`. Holding the jet on one spot grows the patch
+    /// instead of stacking a new one every frame.
+    private func soak(_ p: V3) {
+        if !decals.isEmpty {
+            let i = decals.count - 1
+            if length(decals[i].pos - p) < 0.6 && decals[i].age < 1.0 {
+                decals[i].radius = min(0.95, decals[i].radius + 0.012)
+                // Keep it just past the fade-in, so a held jet does not reset
+                // the patch to transparent every frame.
+                decals[i].age = min(decals[i].age, 0.05)
+                return
+            }
+        }
+        if decals.count >= 40 { decals.removeFirst() }
+        decals.append(Decal(pos: p, radius: Float.random(in: 0.32 ... 0.46)))
     }
 
     /// Dust takes the colour of the ground it comes off — pale sand, dry grass,

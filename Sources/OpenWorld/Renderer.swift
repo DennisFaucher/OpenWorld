@@ -501,17 +501,20 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private func encodeParticles(_ enc: MTLRenderCommandEncoder, view: M4) {
         let parts = game.particles.parts
+        let decals = game.decals
         // Below the surface the water plane is opaque and would hide the spray,
         // but it writes no depth, so the pass has to be skipped instead.
-        guard !parts.isEmpty, game.camPos.y > 0 else { return }
+        guard !parts.isEmpty || !decals.isEmpty, game.camPos.y > 0 else { return }
         let right = normalize(V3(view.columns.0.x, view.columns.1.x, view.columns.2.x))
         let up = normalize(V3(view.columns.0.y, view.columns.1.y, view.columns.2.y))
 
-        if particleVerts.count < parts.count * 6 {
+        let need = (parts.count + decals.count) * 6
+        if particleVerts.count < need {
             particleVerts = [Vertex](repeating: Vertex(pos: .zero, nrm: .zero, col: .zero),
-                                     count: max(parts.count * 6, 6144))
+                                     count: max(need, 6144))
         }
         var n = 0
+        let quad = [V2(-1, -1), V2(1, -1), V2(1, 1), V2(-1, -1), V2(1, 1), V2(-1, 1)]
         for p in parts {
             // Fade out over the lifetime; foam spreads as it goes, droplets shrink.
             let k = p.life / p.maxLife
@@ -521,17 +524,46 @@ final class Renderer: NSObject, MTKViewDelegate {
             // but collapsed into white scratches from eye level.
             let foam = p.kind == 1
             let dust = p.kind == 2
+            let spray = p.kind == 3
             if foam { fade *= sstep(0.10, 0.42, abs(dot(normalize(game.camPos - p.pos), V3(0, 1, 0)))) }
             if dust { fade *= 1.15 }
-            let r = p.size * (foam ? 1.7 - 0.6 * k : (dust ? 0.9 + 1.1 * (1 - k) : 0.55 + 0.7 * k))
-            let ax = right * r
-            let ay = up * r * (foam ? 0.60 : (dust ? 0.92 : 1.0))
+            if spray { fade = clampf(k * 8, 0, 1) * 0.50 }
+            let r = p.size * (foam ? 1.7 - 0.6 * k : (dust ? 0.9 + 1.1 * (1 - k) : (spray ? 1.0 : 0.55 + 0.7 * k)))
+            let ax: V3
+            let ay: V3
+            if spray {
+                // A round sprite at 26 m/s reads as a bubble, so the streak is
+                // stretched along its own screen-space direction of travel.
+                let sx = dot(p.vel, right), sy = dot(p.vel, up)
+                let l = max(sqrt(sx * sx + sy * sy), 1e-4)
+                ax = (right * sx + up * sy) / l * (r * 4.0)
+                ay = (right * (sy / l) - up * (sx / l)) * r
+            } else {
+                ax = right * r
+                ay = up * r * (foam ? 0.60 : (dust ? 0.92 : 1.0))
+            }
             let c = V4(p.tint * (0.9 + 0.12 * k), fade)
-            let quad = [V2(-1, -1), V2(1, -1), V2(1, 1), V2(-1, -1), V2(1, 1), V2(-1, 1)]
+            let kind: Float = foam ? 1 : (dust ? 2 : (spray ? 3 : 0))
             for uv in quad {
                 let off = ax * uv.x + ay * uv.y
-                let kind: Float = foam ? 1 : (dust ? 2 : 0)
                 particleVerts[n] = Vertex(pos: V4(p.pos + off, 1), nrm: V4(uv.x, uv.y, kind, 0), col: c)
+                n += 1
+            }
+        }
+        // Wet patches go last, flat on the ground and oriented to the surface
+        // normal, so they read as soaked into the terrain rather than as sprites.
+        for d in decals {
+            let nrm = World.normal(d.pos.x, d.pos.z)
+            var t = cross(nrm, V3(0, 1, 0))
+            if length(t) < 1e-3 { t = V3(1, 0, 0) }
+            t = normalize(t)
+            let b = normalize(cross(nrm, t))
+            let o = d.pos + nrm * 0.035
+            let fade = 0.32 * min(1, d.age * 20) * clampf((d.life - d.age) / 2.0, 0, 1)
+            let c = V4(V3(0.22, 0.34, 0.42), fade)
+            for uv in quad {
+                let off = t * (uv.x * d.radius) + b * (uv.y * d.radius)
+                particleVerts[n] = Vertex(pos: V4(o + off, 1), nrm: V4(uv.x, uv.y, 4, 0), col: c)
                 n += 1
             }
         }

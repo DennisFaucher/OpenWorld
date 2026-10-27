@@ -479,7 +479,16 @@ enum Shaders {
         float d = length(in.uv);
         if (d > 1.0) { discard_fragment(); }
         float a = in.col.a * smoothstep(1.0, 0.45, d);
-        if (in.kind > 1.5) {
+        if (in.kind > 3.5) {
+            // Wet ground: no internal breakup, because water soaks in evenly,
+            // but the rim wobbles with noise. A clean ellipse reads as a shadow.
+            float n = vnoise(in.wp.xz * 6.0) * 0.6 + vnoise(in.wp.xz * 15.0 + 7.3) * 0.4;
+            a *= smoothstep(1.0, 0.72, d * (0.86 + 0.28 * n));
+        } else if (in.kind > 2.5) {
+            // Spray: a crisp core, since these are stretched streaks of water
+            // rather than mist.
+            a *= smoothstep(1.0, 0.62, d);
+        } else if (in.kind > 1.5) {
             // Dust: a small sprite, so the breakup needs a higher frequency than
             // foam, and the edge has to be softer than a droplet's.
             float n = vnoise(in.wp.xz * 17.0 + in.wp.y * 7.0) * 0.6 + vnoise(in.wp.xz * 31.0) * 0.4;

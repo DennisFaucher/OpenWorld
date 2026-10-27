@@ -110,6 +110,12 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     // `--walk` holds forward for the simulated frames so movement, wakes and
     // particles can be checked without a keyboard.
     if args.contains("--walk") { renderer.input.keys.insert(Key.w) }
+    // `--spray` holds the trigger so the jet and its impact can be rendered;
+    // `--spray-frames N` lets go after N frames, so the wet patches can be
+    // checked as they dry.
+    if args.contains("--spray") { renderer.input.spray = true }
+    let sprayFrames = values("--spray-frames", 1).map { Int($0[0]) } ?? -1
+    if sprayFrames >= 0 { renderer.input.spray = sprayFrames > 0 }
     if args.contains("--walk-fast") {
         renderer.input.keys.insert(Key.w)
         renderer.input.keys.insert(Key.shift)
@@ -129,6 +135,7 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
             renderer.input.keys.insert(Key.space)
         }
         for s in jumpSpecs where s.at + s.hold == f { renderer.input.keys.remove(Key.space) }
+        if sprayFrames >= 0 { renderer.input.spray = f < sprayFrames }
         game.update(dt: 1.0 / 60, input: renderer.input)
     }
     if let v = values("--time", 1) { game.time = v[0] }

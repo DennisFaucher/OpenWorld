@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v2.0 released — M1 (look and feel) and M2 (character and movement) complete, M3 next
+## Status: v2.0 released — M1 (look and feel) and M2 (character and movement) complete, M3 (spray pack) in progress: the jet is in, the tank and the washable targets are next
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -18,6 +18,7 @@ Done and verified via headless renders (live input only smoke-tested):
 - [x] Player: original character from sphere parts, walk cycle, blob shadow, wading, swimming (buoyancy)
 - [x] Physics: gravity, jump, run, terrain snapping, world bounds, circle/AABB obstacle push-out
 - [x] Orbit camera with mouse (captured), arrow keys, gamepad; collision against terrain and obstacles
+- [x] Spray pack: water jet fired along the camera, splash on impact, wet patches that dry, aim pose
 - [x] Headless `--shot` renderer for visual verification
 
 ## Known issues / rough edges
@@ -103,7 +104,8 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Emergent result worth keeping: the mountain flank crosses 45° on some bearings, so the direct line to the summit is blocked and the player has to switchback up it. That reads as terrain rather than as an obstacle, which is the argument for keeping the limit at 45° instead of loosening it to keep every route open.
 
 ### M3: "Spray pack" mechanic (original water-jet tool)
-- [ ] Hold-to-spray with a GPU particle system (spray arc, splash on impact, tint decals)
+- [x] Hold-to-spray water jet: nozzle in the right hand, ballistic stream cut at the impact, splash, and a wet patch that dries (`Spray.swift`)
+  - Particles stayed on the CPU. The plan said GPU, but at ~1200 live droplets the integration is a fraction of a millisecond and the billboard expansion was the only real cost, so the existing path was kept and the pool raised from 600 to 2400. A compute system only pays off an order of magnitude above this.
 - [ ] Hover/boost variant with a limited tank that refills in water
 - [ ] Interactable targets (e.g. wash away goo/graffiti decals on terrain/walls)
 
