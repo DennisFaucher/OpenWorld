@@ -90,6 +90,10 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Lighting.** A 4096x4096 directional shadow map with hardware PCF, hemispheric ambient with a baked contact shadow where walls meet the ground, plus HDR rendering with bloom and a highlight-only tone curve.
 - **Camera.** Orbit with collision against terrain and props.
 
+![Washing goo off the plaza](docs/spray.jpg)
+
+![Hovering over the plaza](docs/hover.jpg)
+
 ![Running the beach](docs/beach.jpg)
 
 ![On the plaza at spawn](docs/spawn.jpg)
@@ -107,7 +111,8 @@ All code lives in `Sources/OpenWorld/`:
 | `main.swift` | Entry point; `--shot` headless mode, otherwise starts `NSApplication` |
 | `AppDelegate.swift` | Window, menu, and the `MTKView` that turns key/mouse events into input state |
 | `Game.swift` | Player physics, swimming, obstacle push-out, orbit camera with collision, gamepad |
-| `Particles.swift` | CPU particle pool for wakes, splashes, footfall dust and skids |
+| `Particles.swift` | CPU particle pool for wakes, splashes, footfall dust, skids and jet spray |
+| `Spray.swift` | The water jet: aim, the solved ballistic arc, wet patches and the goo splats |
 | `World.swift` | Terrain height and normals, terrain mesh, height texture, props, obstacles |
 | `MeshBuilder.swift` | CPU mesh primitives: quad, box, pyramid, frustum, sphere, palm |
 | `Renderer.swift` | Metal setup, render passes, bloom chain, headless PNG output |
