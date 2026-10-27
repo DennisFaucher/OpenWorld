@@ -216,6 +216,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         sphere = GPUMesh(device: device, builder: unit)
         game = Game(obstacles: props.obstacles)
 
+        // Spawn override for play-testing: running to a corner of the map to
+        // try one thing is the slow part of testing, so the live window honours
+        // the same `--pos`/`--yaw` the headless modes use. The shot path sets
+        // these itself after the renderer is built, so it is excluded here.
+        if !CommandLine.arguments.contains("--shot"),
+           let p = argValues("--pos", 2), p.count == 2 {
+            game.pos = V3(p[0], World.height(p[0], p[1]), p[1])
+            if let v = argValues("--yaw", 1) { game.camYaw = v[0] }
+        }
+
         // Height map for shoreline depth in the water shader.
         let size = 512
         let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: size, height: size, mipmapped: false)

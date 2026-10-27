@@ -89,6 +89,7 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - The vertical snap lifted the player onto whatever was under them, so any face was climbable at full speed. A step into ground past the walk limit now keeps only the component that runs along the contour, and standing on such ground removes traction entirely: `Game.slideAccel` 34 m/s² down the fall line against `slideDrag` 2/s, whatever the input says.
   - 45° (`Game.walkSlopeY`) is measured rather than guessed — `--slope-scan` histograms the terrain gradient. The island peaks at 65° around the rocky outcrop at (55, -38); 1% of the sampled area is past 45°, and the mountain flank tops out at 44°, so the one landmark stays climbable.
   - Verified headlessly: walking west into the outcrop from the shore climbs 38° → 45° and then stops advancing in x, sliding along the face instead; starting on a 54° patch with forward held slides down the fall line from y 3.27 to the waterline, `grounded` never dropping; the 44° mountain flank still walks at full pace.
+  - Play-test spawns: `--pos 60 -30 --yaw 1.571` stands you at the foot of the scarp, where holding forward climbs to 44.5° and stalls; `--pos 59 -29 --yaw 1.571` starts you on a 52° face, which slides immediately.
 
 ### M3: "Spray pack" mechanic (original water-jet tool)
 - [ ] Hold-to-spray with a GPU particle system (spray arc, splash on impact, tint decals)

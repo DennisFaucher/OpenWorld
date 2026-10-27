@@ -53,8 +53,8 @@ The game can render a single frame to a PNG without opening a window, which is h
 | Flag | Meaning |
 | --- | --- |
 | `--shot PATH` | Render one frame to `PATH` and exit |
-| `--pos X Z` | Place the player on the terrain at `X, Z` |
-| `--yaw RAD` | Camera orbit angle (`0` puts the camera on `+Z`, `pi` is the spawn view) |
+| `--pos X Z` | Place the player on the terrain at `X, Z`. Also a spawn override for the live window, so a play-test does not start with a run across the island |
+| `--yaw RAD` | Camera orbit angle (`0` puts the camera on `+Z`, `pi` is the spawn view); pairs with `--pos` in the live window |
 | `--pitch RAD` | Camera elevation |
 | `--dist D` | Camera distance |
 | `--time T` | Animation clock, for the water and clouds |
