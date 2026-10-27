@@ -3,6 +3,15 @@ import Metal
 
 let args = CommandLine.arguments
 
+enum Version {
+    static let string = "1.0"
+}
+
+if args.contains("--version") {
+    print("OpenWorld \(Version.string)")
+    exit(0)
+}
+
 /// `--shot out.png [--pos x z] [--yaw a] [--pitch p] [--dist d] [--time t] [--hour h] [--size w h]`
 /// renders one frame without opening a window, for quick visual checks.
 if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {

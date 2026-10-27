@@ -4,6 +4,14 @@ A native macOS third-person island prototype in a bright, stylized, low-poly tro
 
 ![The island from above](docs/overview.jpg)
 
+## Download
+
+Grab a build from the [releases page](https://github.com/DennisFaucher/OpenWorld/releases) — `OpenWorld-vX.Y-macos-arm64.zip`, unzip it and run `./OpenWorld`. macOS 14 or later on Apple Silicon.
+
+The binary is unsigned, so macOS quarantines it on first launch. Right-click it and choose **Open** once, or clear the flag with `xattr -dr com.apple.quarantine ./OpenWorld`.
+
+Or build it from source below.
+
 ## Requirements
 
 - macOS 14 or later on Apple Silicon
@@ -56,6 +64,8 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--size W H` | Output resolution, default 1920x1080 |
 
 It runs 90 simulation steps first so physics and the camera settle, then renders one 4x-MSAA frame offscreen.
+
+`.build/release/OpenWorld --version` prints the version.
 
 ## What's in it
 

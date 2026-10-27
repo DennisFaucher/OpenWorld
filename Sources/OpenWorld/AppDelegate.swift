@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = NSWindow(contentRect: view.frame,
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "OpenWorld"
+        window.title = "OpenWorld \(Version.string)"
         window.contentView = view
         window.center()
         window.makeKeyAndOrderFront(nil)

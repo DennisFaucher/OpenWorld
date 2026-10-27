@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: Milestone 0 (prototype) and M1 (look and feel) complete
+## Status: v1.0 released — milestone 0 (prototype) and M1 (look and feel) complete
 
 Done and verified via headless renders (live input only smoke-tested):
 
