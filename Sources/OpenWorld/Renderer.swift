@@ -591,31 +591,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func drawPlayer(_ enc: MTLRenderCommandEncoder) {
-        let g = game
-        let swing = sin(g.walkPhase) * 0.8 * min(g.speedNorm, 1.4)
-        let bob = abs(sin(g.walkPhase)) * 0.07 * min(g.speedNorm, 1.4)
-        let tilt: Float = g.swimming ? 1.0 : (g.onGround ? 0.08 * min(g.speedNorm, 1.5) : -0.1)
-        let root = M4.translation(g.pos + V3(0, bob, 0)) * M4.rotationY(g.facing) * M4.rotationX(tilt)
-
-        func part(_ local: M4, _ color: V3) {
-            drawMesh(enc, sphere, model: root * local, tint: V4(color, 1))
-        }
-        func limb(_ hip: V3, _ angle: Float, _ radii: V3, _ color: V3, drop: Float) {
-            part(M4.translation(hip) * M4.rotationX(angle) * M4.translation(V3(0, -drop, 0)) * M4.scale(radii), color)
-        }
-
-        let shirt = V3(0.15, 0.55, 0.92), skin = V3(0.99, 0.80, 0.64)
-        let shoe = V3(0.45, 0.27, 0.14), straw = V3(0.97, 0.86, 0.48)
-        part(M4.translation(V3(0, 0.9, 0)) * M4.scale(V3(0.42, 0.5, 0.36)), shirt)
-        part(M4.translation(V3(0, 1.55, 0)) * M4.scale(V3(0.36, 0.36, 0.36)), skin)
-        part(M4.translation(V3(0, 1.82, 0)) * M4.scale(V3(0.5, 0.06, 0.5)), straw)
-        part(M4.translation(V3(0, 1.9, 0)) * M4.scale(V3(0.3, 0.2, 0.3)), straw)
-        part(M4.translation(V3(0, 1.97, 0)) * M4.scale(V3(0.31, 0.05, 0.31)), V3(0.9, 0.25, 0.25))
-        for sx: Float in [-1, 1] {
-            part(M4.translation(V3(sx * 0.13, 1.6, 0.32)) * M4.scale(V3(0.05, 0.06, 0.05)), V3(0.08, 0.06, 0.06))
-            limb(V3(sx * 0.16, 0.6, 0), sx * swing, V3(0.14, 0.3, 0.15), V3(0.95, 0.9, 0.8), drop: 0.2)
-            limb(V3(sx * 0.16, 0.6, 0), sx * swing, V3(0.16, 0.1, 0.22), shoe, drop: 0.5)
-            limb(V3(sx * 0.5, 1.15, 0), -sx * swing, V3(0.12, 0.3, 0.12), shirt, drop: 0.25)
+        for (model, color) in Player.parts(game.pose, pos: game.pos, facing: game.facing) {
+            drawMesh(enc, sphere, model: model, tint: V4(color, 1))
         }
     }
 

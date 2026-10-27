@@ -47,9 +47,18 @@ final class Game {
     var facing: Float = 0
     var onGround = false
     var swimming = false
+    /// On ground past the walk limit, so the character is sliding rather than
+    /// running. Owned by `update` and read by the rig.
+    var sliding = false
     var walkPhase: Float = 0
     var speedNorm: Float = 0
     var time: Float = 0
+    /// Blend weights per `Player.State` (same order: idle first), eased so a
+    /// state change does not pop.
+    var poseWeights: [Float] = [1, 0, 0, 0, 0, 0]
+    /// Weighted pose of the states above, advanced every update so headless
+    /// shots settle before they render.
+    var pose = PlayerPose()
     /// Degrees added to the base field of view, so a sprint has a little kick.
     var fovBoost: Float = 0
     let particles = ParticleSystem()
@@ -134,7 +143,7 @@ final class Game {
         // traction at all, so the slope wins and the player slides down the fall
         // line whatever the stick says.
         let nHere = World.normal(pos.x, pos.z)
-        let sliding = onGround && !swimming && nHere.y < Game.walkSlopeY
+        sliding = onGround && !swimming && nHere.y < Game.walkSlopeY
         if sliding {
             let dl = max(sqrt(nHere.x * nHere.x + nHere.z * nHere.z), 1e-5)
             hv += V2(nHere.x, nHere.z) / dl * (Game.slideAccel * dt)
@@ -243,7 +252,12 @@ final class Game {
             let d = atan2(sin(target - facing), cos(target - facing))
             facing += d * min(1, 14 * dt)
         }
-        walkPhase += speed * dt * 2.6
+        walkPhase += min(speed, 11) * dt * 1.5
+
+        let want = Player.weights(self)
+        for i in want.indices { poseWeights[i] += (want[i] - poseWeights[i]) * min(1, 12 * dt) }
+        let total = poseWeights.reduce(0, +)
+        pose = total > 1e-4 ? Player.pose(weights: poseWeights.map { $0 / total }, self) : Player.pose(.idle, self)
 
         // Water spray. Wading off the beach is a walk, not a drop: the terrain
         // snap zeroes `vel.y` every frame, so the horizontal speed is what

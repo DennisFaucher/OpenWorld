@@ -36,6 +36,11 @@ extension M4 {
         return M4(columns: (V4(c, 0, -s, 0), V4(0, 1, 0, 0), V4(s, 0, c, 0), V4(0, 0, 0, 1)))
     }
 
+    static func rotationZ(_ a: Float) -> M4 {
+        let c = cos(a), s = sin(a)
+        return M4(columns: (V4(c, s, 0, 0), V4(-s, c, 0, 0), V4(0, 0, 1, 0), V4(0, 0, 0, 1)))
+    }
+
     /// Right-handed perspective with Metal's 0...1 clip-space depth.
     static func perspective(fovY: Float, aspect: Float, near: Float, far: Float) -> M4 {
         let ys = 1 / tan(fovY * 0.5)

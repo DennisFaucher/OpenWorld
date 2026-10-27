@@ -1,5 +1,6 @@
 import AppKit
 import Metal
+import simd
 
 let args = CommandLine.arguments
 
@@ -74,7 +75,7 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
             a += 1
         }
     }
-    print("frame       x       y       z      vy  ground swim   fov  slope")
+    print("frame       x       y       z      vy  ground swim   fov  slope |   hipL   hipR  kneeL  spd")
     for f in 0..<frames {
         for s in jumpSpecs where s.at == f {
             input.jumpQueued = true
@@ -83,10 +84,12 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
         for s in jumpSpecs where s.at + s.hold == f { input.keys.remove(Key.space) }
         game.update(dt: 1.0 / 60, input: input)
         let ny = World.normal(game.pos.x, game.pos.z).y
-        print(String(format: "%5d %7.2f %7.2f %7.2f %7.2f %6d %4d %5.1f %6.1f",
+        print(String(format: "%5d %7.2f %7.2f %7.2f %7.2f %6d %4d %5.1f %6.1f | %6.1f %6.1f %6.1f %6.2f",
                      f, game.pos.x, game.pos.y, game.pos.z, game.vel.y,
                      game.onGround ? 1 : 0, game.swimming ? 1 : 0, game.fovBoost,
-                     acos(clampf(ny, -1, 1)) * 180 / Float.pi))
+                     acos(clampf(ny, -1, 1)) * 180 / Float.pi,
+                     game.pose.hipL * 180 / Float.pi, game.pose.hipR * 180 / Float.pi,
+                     game.pose.kneeL * 180 / Float.pi, game.speedNorm))
     }
     exit(0)
 }
@@ -112,8 +115,33 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
         renderer.input.keys.insert(Key.shift)
     }
     let frames = values("--frames", 1).map { Int($0[0]) } ?? 90
-    for _ in 0..<frames { game.update(dt: 1.0 / 60, input: renderer.input) }
+    // `--jump F D` works here too, so an airborne frame can be rendered.
+    var jumpSpecs: [(at: Int, hold: Int)] = []
+    var a = args.firstIndex(of: "--jump") ?? args.count
+    while a + 2 < args.count + 0, args[a] == "--jump",
+          let f = Int(args[a + 1]), let d = Int(args[a + 2]) {
+        jumpSpecs.append((f, d))
+        a += 3
+    }
+    for f in 0..<frames {
+        for s in jumpSpecs where s.at == f {
+            renderer.input.jumpQueued = true
+            renderer.input.keys.insert(Key.space)
+        }
+        for s in jumpSpecs where s.at + s.hold == f { renderer.input.keys.remove(Key.space) }
+        game.update(dt: 1.0 / 60, input: renderer.input)
+    }
     if let v = values("--time", 1) { game.time = v[0] }
+    // `--look RAD` re-orbits the finished frame without re-simulating, so a run
+    // cycle can be checked from the side instead of from behind: turning the
+    // camera before the frames also turns the player, which is the point of the
+    // camera-relative controls.
+    if let v = values("--look", 1) {
+        let d = length(game.camPos - game.camTarget)
+        let y = game.camYaw + v[0]
+        game.camPos = game.camTarget
+            + V3(sin(y) * cos(game.camPitch), sin(game.camPitch), cos(y) * cos(game.camPitch)) * d
+    }
     let size = values("--size", 2) ?? [1920, 1080]
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))
     exit(0)
