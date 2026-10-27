@@ -90,6 +90,7 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - 45° (`Game.walkSlopeY`) is measured rather than guessed — `--slope-scan` histograms the terrain gradient. The island peaks at 65° around the rocky outcrop at (55, -38); 1% of the sampled area is past 45°, and the mountain flank tops out at 44°, so the one landmark stays climbable.
   - Verified headlessly: walking west into the outcrop from the shore climbs 38° → 45° and then stops advancing in x, sliding along the face instead; starting on a 54° patch with forward held slides down the fall line from y 3.27 to the waterline, `grounded` never dropping; the 44° mountain flank still walks at full pace.
   - Play-test spawns: `--pos 60 -30 --yaw 1.571` stands you at the foot of the scarp, where holding forward climbs to 44.5° and stalls; `--pos 59 -29 --yaw 1.571` starts you on a 52° face, which slides immediately.
+  - Emergent result worth keeping: the mountain flank crosses 45° on some bearings, so the direct line to the summit is blocked and the player has to switchback up it. That reads as terrain rather than as an obstacle, which is the argument for keeping the limit at 45° instead of loosening it to keep every route open.
 
 ### M3: "Spray pack" mechanic (original water-jet tool)
 - [ ] Hold-to-spray with a GPU particle system (spray arc, splash on impact, tint decals)
