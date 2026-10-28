@@ -643,6 +643,36 @@ final class Renderer: NSObject, MTKViewDelegate {
     private func setGauge(_ enc: MTLRenderCommandEncoder) {
         var g = V4(clampf(game.tank, 0, 1), game.tankDry ? 1 : 0, game.aimImpact != nil ? 1 : 0, 0)
         enc.setFragmentBytes(&g, length: MemoryLayout<V4>.stride, index: 0)
+        var h = HUDText(steps: game.steps, metres: game.distance, calories: game.calories)
+        enc.setFragmentBytes(&h, length: MemoryLayout<HUDText>.stride, index: 1)
+    }
+
+    /// The activity readout, formatted on the CPU. The shader's font only has to
+    /// draw characters, so the digits, the decimal point and the alignment of a
+    /// field as it grows all live here.
+    private struct HUDText {
+        var steps = SIMD4<Int32>(repeating: 0)
+        var miles = SIMD4<Int32>(repeating: 0)
+        var calories = SIMD4<Int32>(repeating: 0)
+
+        init(steps: Int, metres: Float, calories: Int) {
+            // Four cells is all the font is given; a very long session clips the
+            // top digit rather than running into the next column.
+            let hundredths = min(999, Int(metres / 1609.344 * 100))
+            self.steps = HUDText.field("\(min(steps, 9999))", 4)
+            self.miles = HUDText.field("\(hundredths / 100).\(String(format: "%02d", hundredths % 100))", 4)
+            self.calories = HUDText.field("\(min(calories, 999))", 3)
+        }
+
+        /// Right-aligns in `width` cells, blanks on the left, so the number grows
+        /// leftwards instead of shoving the unit out of its column.
+        private static func field(_ text: String, _ width: Int) -> SIMD4<Int32> {
+            var v = SIMD4<Int32>(repeating: 0)
+            let codes = text.unicodeScalars.map { $0 == " " ? Int32(0) : Int32($0.value) }.suffix(width)
+            let start = width - codes.count
+            for (i, c) in codes.enumerated() { v[start + i] = c }
+            return v
+        }
     }
 
     private func encodeParticles(_ enc: MTLRenderCommandEncoder, view: M4) {

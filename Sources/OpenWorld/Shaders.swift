@@ -621,10 +621,81 @@ enum Shaders {
         return min(x, knee) + over / (1.0 + over * 1.5);
     }
 
+    // ---- HUD font -----------------------------------------------------------
+    // A 5x6 pixel font: six rows of five bits, top row first, bit 4 leftmost.
+    // Swift formats the numbers into character codes, so the shader never has
+    // to split an integer into digits; anything it does not know is blank.
+
+    struct HUD {
+        int4 steps;
+        int4 miles;
+        int4 calories;
+    };
+
+    static uint glyphBits(int c) {
+        switch (c) {
+            case 48: return 0x3F18C63F;   // '0'
+            case 49: return 0x19C6319E;   // '1'
+            case 50: return 0x3D11321F;   // '2'
+            case 51: return 0x3D17062E;   // '3'
+            case 52: return 0x252F8842;   // '4'
+            case 53: return 0x3F0F062E;   // '5'
+            case 54: return 0x1D0F462E;   // '6'
+            case 55: return 0x3E111108;   // '7'
+            case 56: return 0x1D17462E;   // '8'
+            case 57: return 0x1D18BC2E;   // '9'
+            case 83: return 0x1F07062E;   // 'S'
+            case 84: return 0x3E421084;   // 'T'
+            case 69: return 0x3F0F421F;   // 'E'
+            case 80: return 0x3D1F4210;   // 'P'
+            case 77: return 0x23BAC631;   // 'M'
+            case 73: return 0x3E42109F;   // 'I'
+            case 67: return 0x1F08420F;   // 'C'
+            case 65: return 0x1D18FE31;   // 'A'
+            case 76: return 0x2108421F;   // 'L'
+            case 75: return 0x232E4A31;   // 'K'
+            case 46: return 0x000006;   // '.'
+            default: return 0u;
+        }
+    }
+
+    /// One glyph; `origin` is its top-left corner in pixels, y down.
+    static float glyphAt(float2 p, float2 origin, float scale, int ch) {
+        if (ch == 0) { return 0.0; }
+        float2 cell = float2(p.x - origin.x, origin.y - p.y) / scale;
+        if (cell.x < -1.0 || cell.y < -1.0 || cell.x >= 6.0 || cell.y >= 7.0) { return 0.0; }
+        // The cell grid is not an integer number of screen pixels at every
+        // resolution, so feather the glyph's own edges by half a pixel instead
+        // of letting the bitmap stair-step.
+        float2 fd = fwidth(cell) * 0.5 + 1e-4;
+        float2 lo = smoothstep(-fd, fd, cell);
+        float2 hi = smoothstep(-fd, fd, float2(5.0, 6.0) - cell);
+        float inside = lo.x * lo.y * hi.x * hi.y;
+        uint bits = glyphBits(ch);
+        uint row = (bits >> uint((5 - clamp(int(cell.y), 0, 5)) * 5)) & 0x1Fu;
+        return inside * float((row >> uint(4 - clamp(int(cell.x), 0, 4))) & 1u);
+    }
+
+    /// Up to four characters in a row, six columns apart.
+    static float textRow(float2 p, float2 origin, float scale, int4 chars, int count) {
+        float m = 0.0;
+        for (int i = 0; i < count; ++i) {
+            int ch = i == 0 ? chars.x : (i == 1 ? chars.y : (i == 2 ? chars.z : chars.w));
+            m = max(m, glyphAt(p, origin + float2(float(i) * 6.0 * scale, 0.0), scale, ch));
+        }
+        return m;
+    }
+
+    static float roundBox(float2 p, float2 c, float2 hb, float r) {
+        float2 q = abs(p - c) - (hb - r);
+        return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+    }
+
     fragment float4 fs_bloom_composite(PostOut in [[stage_in]],
                                        texture2d<float> scene [[texture(0)]],
                                        texture2d<float> bloom [[texture(1)]],
-                                       constant float4& gauge [[buffer(0)]]) {
+                                       constant float4& gauge [[buffer(0)]],
+                                       constant HUD& hud [[buffer(1)]]) {
         constexpr sampler s(filter::linear, address::clamp_to_edge);
         float3 c = scene.sample(s, in.uv).rgb;
         float3 b = bloom.sample(s, in.uv).rgb;
@@ -673,6 +744,38 @@ enum Shaders {
             float3 water = mix(float3(0.98, 0.60, 0.26), float3(0.36, 0.80, 0.96),
                                smoothstep(0.22, 0.28, gauge.x));
             c = mix(c, water, inside * filled * 0.90);
+        }
+
+
+        // Activity readout, to the right of the bar: footfalls, miles covered on
+        // foot and a rough calorie count, small enough to read as a watch widget
+        // and never in the way. Labels are baked in the font above; the numbers
+        // arrive pre-formatted as character codes.
+        {
+            float2 pc = float2(167.0 * sc, 84.0 * sc);
+            float2 ph = float2(112.0 * sc, 23.0 * sc);
+            float sd = roundBox(p, pc, ph, 9.0 * sc);
+            c = mix(c, float3(0.04, 0.07, 0.11), (1.0 - smoothstep(-sc, sc, sd)) * 0.42);
+
+            // Whole-pixel cells: a 0.9 px stroke aliases into dashes, so the
+            // font snaps to an integer size and the edges are feathered instead.
+            float ls = max(1.0, round(1.4 * sc));
+            float vs = max(2.0, round(2.6 * sc));
+            float2 l0 = float2(60.0 * sc, 101.0 * sc);
+            float2 l1 = float2(140.0 * sc, 101.0 * sc);
+            float2 l2 = float2(220.0 * sc, 101.0 * sc);
+            float2 v0 = float2(60.0 * sc, 85.0 * sc);
+            float2 v1 = float2(140.0 * sc, 85.0 * sc);
+            float2 v2 = float2(220.0 * sc, 85.0 * sc);
+
+            float label = max(max(textRow(p, l0, ls, int4(83, 84, 69, 80), 4),
+                                  textRow(p, l1, ls, int4(77, 73, 76, 69), 4)),
+                              textRow(p, l2, ls, int4(75, 67, 65, 76), 4));
+            float value = max(max(textRow(p, v0, vs, hud.steps, 4),
+                                  textRow(p, v1, vs, hud.miles, 4)),
+                              textRow(p, v2, vs, hud.calories, 3));
+            c = mix(c, float3(0.62, 0.80, 0.90), label * 0.78);
+            c = mix(c, float3(0.98, 0.99, 1.0), value);
         }
 
         // Aim reticle. The stream is solved to land on the eye ray, so the

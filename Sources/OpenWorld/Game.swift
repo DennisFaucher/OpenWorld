@@ -103,6 +103,14 @@ final class Game {
     /// Walk-phase step counter. A change means a foot landed.
     private var stepIndex = 0
     private var dustTimer: Float = 0
+    /// Session totals for the activity readout. The step count rides the same
+    /// walk phase that fires the dust, so it cannot drift from the animation,
+    /// and the distance only counts ground covered on foot.
+    private(set) var steps: Int = 0
+    private(set) var distance: Float = 0
+    /// Cosmetic, but a plausible one: a footfall is worth a little under a
+    /// twentieth of a kilocalorie.
+    var calories: Int { Int(Float(steps) * 0.045) }
     /// Raw move input this frame, so the camera can tell a run from a strafe.
     private var wishInput = V2.zero
 
@@ -312,6 +320,11 @@ final class Game {
 
         vel.x = hv.x
         vel.z = hv.y
+        // Distance only counts ground covered on foot: swimming and a boat ride
+        // are travel, but they are not what the readout is quoting.
+        if !swimming && onGround {
+            distance += length(V2(np.x - pos.x, np.z - pos.z))
+        }
         pos = np
 
         let speed = length(hv)
@@ -362,6 +375,9 @@ final class Game {
         let faceSide = V3(cos(facing), 0, -sin(facing))
         let step = Int(walkPhase / Float.pi)
         if step != stepIndex {
+            // The walk phase also advances while swimming, but those are kicks,
+            // not steps.
+            if !swimming { steps += abs(step - stepIndex) }
             stepIndex = step
             if dry && !sliding && speed > 1.4 {
                 let foot = pos + faceSide * (step % 2 == 0 ? 0.14 : -0.14)
