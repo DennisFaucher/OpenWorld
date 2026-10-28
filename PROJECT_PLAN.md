@@ -165,7 +165,12 @@ Shipped as v4.0 with three items deliberately deferred: true terrain streaming (
 - [ ] Bridges between islands; fast-travel or loading-free transitions
 
 ### M5: Gameplay layer
-- [ ] Collectibles (coins/shines), save state; the rest of the HUD (the composite-pass readout covers the tank, the reticle, steps, distance and calories)
+- [x] Collectibles and save state
+  - Forty crystals, placed by rejection sampling against `World.height`: dry land, ground walkable at 45 deg with a margin, nine metres apart, clear of walls and not on a jetty. Shares per island are proportional to area, so the home island gets 18 and the smallest cay 5. Indices are stable because the field is seeded, which is what lets the save file store indices instead of coordinates.
+  - An eight-triangle bipyramid with per-face normals, spun and bobbed from the clock, drawn with a tint above 1 so the bloom pass picks it up. A soft halo sprite is emitted behind each gem from the particle pass — without it a crystal reads as another flower at 40 m, even in gold.
+  - Walking into one takes it: no key, because a prompt would turn collecting into a chore. A burst of kind-6 sparkles (four-point stars) and a counter in a pill above the activity readout. A row of the bitmap font is four characters, so "12/40" needs two registers — hence `shards` plus `shardTail`.
+  - Progress is a `SaveState` in `~/Library/Application Support/OpenWorld/save.json`, written on every pickup and on quit, and keyed to a hash of the field so a moved crystal drops the file instead of marking the wrong one taken. Headless runs are hermetic: they neither read nor write it without `--save PATH`.
+  - Verified: the field (`--shard-scan`, 40 shards), a pickup and the sparkle (a `--sim` walk with the take printed, then a render mid-burst), the save round trip (pick up, exit, relaunch, `1/40` restored), the counter at 0, 1, 39 and 40 (the last in gold), and that found crystals are not drawn. Not verified live: the file being written on window close.
 - [ ] NPCs / simple AI wanderers, a few interactive buildings
 - [ ] Audio: ambient waves/birds, footsteps, music hooks via `AVAudioEngine`
 - [ ] Simple quest/goal loop so there is something to *do*

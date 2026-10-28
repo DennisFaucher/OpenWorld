@@ -123,6 +123,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let propBatches: [InstancedBatch]
     private let sphere: GPUMesh
     private let boatMesh: GPUMesh
+    private let shardMesh: GPUMesh
     static let waterCells = 64
     /// Rings of 64 cells each: 1 m near the camera doubling to 256 m, which is
     /// +-8 km of open water and 57k triangles instead of 180k.
@@ -156,7 +157,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var fpsStart = CACurrentMediaTime()
     private weak var view: MTKView?
 
-    init(device: MTLDevice, hour: Float = 12) {
+    /// `save` is the progress read off disk before the world is built, so the
+    /// crystals already taken are never drawn. Passed in rather than loaded here
+    /// because a headless render must not read the player's file at all.
+    init(device: MTLDevice, hour: Float = 12, save: SaveState? = nil) {
         self.device = device
         queue = device.makeCommandQueue()!
         (sunDir, sunColor) = Renderer.sun(hour: hour)
@@ -318,7 +322,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         unit.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 14, segs: 24)
         sphere = GPUMesh(device: device, builder: unit)
         boatMesh = GPUMesh(device: device, builder: Boat.buildMesh())
-        game = Game(obstacles: props.obstacles)
+        shardMesh = GPUMesh(device: device, builder: Shards.buildMesh())
+        game = Game(obstacles: props.obstacles, save: save)
 
         // Spawn override for play-testing: running to a corner of the map to
         // try one thing is the slow part of testing, so the live window honours
@@ -606,6 +611,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(mainPSO)
         drawPlayer(enc)
         drawBoats(enc)
+        drawShards(enc)
 
         // Water last, blended over everything.
         enc.setRenderPipelineState(waterPSO)
@@ -648,7 +654,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         var g = V4(clampf(game.tank, 0, 1), game.tankDry ? 1 : 0,
                    game.aimImpact != nil ? 1 : 0, Float(game.boardingHint))
         enc.setFragmentBytes(&g, length: MemoryLayout<V4>.stride, index: 0)
-        var h = HUDText(steps: game.steps, metres: game.distance, calories: game.calories)
+        var h = HUDText(steps: game.steps, metres: game.distance, calories: game.calories,
+                        found: game.found.count, total: game.shards.count)
         enc.setFragmentBytes(&h, length: MemoryLayout<HUDText>.stride, index: 1)
     }
 
@@ -659,14 +666,25 @@ final class Renderer: NSObject, MTKViewDelegate {
         var steps = SIMD4<Int32>(repeating: 0)
         var miles = SIMD4<Int32>(repeating: 0)
         var calories = SIMD4<Int32>(repeating: 0)
+        /// The first four characters of "found/total".
+        var shards = SIMD4<Int32>(repeating: 0)
+        /// The fifth character, and 1 in `.y` once every crystal has been taken.
+        /// A font row is four cells, so five characters do not fit one register —
+        /// the shader draws the last one as a second row of one.
+        var shardTail = SIMD4<Int32>(repeating: 0)
 
-        init(steps: Int, metres: Float, calories: Int) {
+        init(steps: Int, metres: Float, calories: Int, found: Int, total: Int) {
             // Four cells is all the font is given; a very long session clips the
             // top digit rather than running into the next column.
             let hundredths = min(999, Int(metres / 1609.344 * 100))
             self.steps = HUDText.field("\(min(steps, 9999))", 4)
             self.miles = HUDText.field("\(hundredths / 100).\(String(format: "%02d", hundredths % 100))", 4)
             self.calories = HUDText.field("\(min(calories, 999))", 3)
+            var count = Array("\(found)/\(total)".unicodeScalars.map { Int32($0.value) })
+            while count.count > 5 { count.removeFirst() }
+            while count.count < 5 { count.insert(0, at: 0) }
+            self.shards = SIMD4<Int32>(count[0], count[1], count[2], count[3])
+            self.shardTail = SIMD4<Int32>(count[4], found >= total ? 1 : 0, 0, 0)
         }
 
         /// Right-aligns in `width` cells, blanks on the left, so the number grows
@@ -686,11 +704,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         let goos = game.goos
         // Below the surface the water plane is opaque and would hide the spray,
         // but it writes no depth, so the pass has to be skipped instead.
-        guard !parts.isEmpty || !decals.isEmpty || !goos.isEmpty, game.camPos.y > 0 else { return }
+        let glows = game.shards.indices.filter {
+            !game.found.contains($0) && length(game.shards[$0].pos - game.camPos) < 170
+        }
+        guard !parts.isEmpty || !decals.isEmpty || !goos.isEmpty || !glows.isEmpty,
+              game.camPos.y > 0 else { return }
         let right = normalize(V3(view.columns.0.x, view.columns.1.x, view.columns.2.x))
         let up = normalize(V3(view.columns.0.y, view.columns.1.y, view.columns.2.y))
 
-        let need = (parts.count + decals.count + goos.count) * 6
+        let need = (parts.count + decals.count + goos.count + glows.count) * 6
         if particleVerts.count < need {
             particleVerts = [Vertex](repeating: Vertex(pos: .zero, nrm: .zero, col: .zero),
                                      count: max(need, 6144))
@@ -761,6 +783,23 @@ final class Renderer: NSObject, MTKViewDelegate {
                 n += 1
             }
         }
+        // A halo behind every crystal. Without one a shard reads as another
+        // flower at 40 m; the halo is what lets the eye find it across a bay.
+        // Pushed away from the camera so the gem's own facets still draw in
+        // front of it and only the ring around them glows.
+        for i in glows {
+            let s = game.shards[i]
+            let g = s.gem(time: game.time)
+            let c = g - normalize(game.camPos - g) * 0.45
+            let r = 0.62 * s.scale + 0.05 * sin(game.time * 2.1 + s.phase)
+            let col = V4(V3(1.0, 0.74, 0.30), 0.5)
+            for uv in quad {
+                let off = right * (uv.x * r) + up * (uv.y * r)
+                particleVerts[n] = Vertex(pos: V4(c + off, 1), nrm: V4(uv.x, uv.y, 7, 0), col: col)
+                n += 1
+            }
+        }
+
         let bytes = n * MemoryLayout<Vertex>.stride
         if particleBuffer == nil || particleBuffer!.length < bytes {
             particleBuffer = device.makeBuffer(length: max(bytes, 6144 * MemoryLayout<Vertex>.stride),
@@ -914,6 +953,20 @@ final class Renderer: NSObject, MTKViewDelegate {
                 * M4.rotationY(b.heading - Float.pi / 2)
                 * M4.rotationX(b.roll)
             drawMesh(enc, boatMesh, model: model, tint: V4(1, 1, 1, 1))
+        }
+    }
+
+    /// The crystals: one small mesh each, spun and bobbed off the clock. Tint
+    /// above 1 pushes the facets past the bloom threshold, which is what makes
+    /// them read as glints from across a beach — there is no emissive material,
+    /// and an unlit pipeline for eight triangles would not earn its pass.
+    private func drawShards(_ enc: MTLRenderCommandEncoder) {
+        for (i, s) in game.shards.enumerated() where !game.found.contains(i) {
+            let p = s.gem(time: game.time)
+            if length(p - game.camPos) > 170 { continue }
+            let model = M4.translation(p) * M4.rotationY(s.spin(time: game.time))
+                * M4.scale(V3(repeating: s.scale))
+            drawMesh(enc, shardMesh, model: model, tint: V4(2.0, 1.72, 1.0, 1))
         }
     }
 

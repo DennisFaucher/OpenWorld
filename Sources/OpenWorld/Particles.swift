@@ -151,6 +151,23 @@ final class ParticleSystem {
         }
     }
 
+    /// A crystal coming apart: a ring of bright motes that rise and fade. Kind 6
+    /// draws a four-point star, so a pickup reads as a glint rather than as a
+    /// puff of dust.
+    func shimmer(at p: V3, tint: V3 = V3(1.40, 1.16, 0.52)) {
+        for i in 0..<18 {
+            let a = Float(i) / 18 * 2 * Float.pi + Float.random(in: -0.25 ... 0.25)
+            let r = Float.random(in: 0.12 ... 0.45)
+            add(Particle(pos: p + V3(cos(a) * r, Float.random(in: -0.25 ... 0.30), sin(a) * r),
+                         vel: V3(cos(a) * Float.random(in: 0.5 ... 1.8),
+                                 Float.random(in: 1.0 ... 3.2),
+                                 sin(a) * Float.random(in: 0.5 ... 1.8)),
+                         life: Float.random(in: 0.35 ... 0.70), maxLife: 0.70,
+                         size: Float.random(in: 0.05 ... 0.13),
+                         tint: tint, gravity: -1.4, drag: 1.3, kind: 6))
+        }
+    }
+
     func update(dt: Float, swimming: Bool, speed: Float, feet: V3, wading: Bool) {
         wakeTimer -= dt
         wadeTimer -= dt

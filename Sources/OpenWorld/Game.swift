@@ -62,6 +62,14 @@ final class Game {
     var decals: [Decal] = []
     /// Goo splats, in the order they were placed. Washed ones are removed.
     var goos: [Goo] = []
+    /// The crystals, in a fixed order. Generated from the terrain, never edited.
+    let shards: [Shard]
+    /// Indices into `shards` already picked up. Set once by the save file and
+    /// then only grown, so the count is the whole of the game's progress.
+    private(set) var found: Set<Int> = []
+    /// Called when a crystal is taken, so the app layer can write the save
+    /// without `Game` ever touching the disk (the headless paths leave it nil).
+    var onShard: ((Int) -> Void)?
     /// One boat per pier, moored at the seaward end. Index into `boats` while
     /// riding; nil on foot.
     var boats: [Boat] = []
@@ -121,12 +129,20 @@ final class Game {
     /// Raw move input this frame, so the camera can tell a run from a strafe.
     private var wishInput = V2.zero
 
-    init(obstacles: [Obstacle]) {
+    init(obstacles: [Obstacle], save: SaveState? = nil) {
         self.obstacles = obstacles
         boats = World.boatMoorings.map { Boat(pos: $0.pos, heading: $0.heading) }
         goos = Spray.gooSites.map {
             Goo(pos: V3($0.x, World.height($0.x, $0.y), $0.y),
                 radius: 0.85 + 0.35 * abs(sin($0.x * 1.7 + $0.y * 0.9)))
+        }
+        shards = Shards.field(obstacles: obstacles)
+        // A file from a build that placed the crystals somewhere else describes a
+        // world that no longer exists, so it is dropped rather than remapped.
+        if let save, save.layout == Save.layoutHash(shards) {
+            found = Set(save.found.filter { shards.indices.contains($0) })
+            steps = max(0, save.steps)
+            distance = max(0, save.metres)
         }
     }
 
@@ -433,6 +449,16 @@ final class Game {
             pos = np
         }
 
+        // Collecting. Walking into a crystal takes it, with no key to press: the
+        // point of scattering them is to make you want to walk over there, and a
+        // prompt would turn that into a chore. One per frame is enough — two in
+        // reach at once are nine metres apart at the closest.
+        if let i = shards.indices.first(where: { !found.contains($0) && inReach(shards[$0]) }) {
+            found.insert(i)
+            particles.shimmer(at: shards[i].gem(time: time))
+            onShard?(i)
+        }
+
 
         let speed = length(hv)
         speedNorm = riding == nil ? speed / 9 : 0
@@ -530,6 +556,13 @@ final class Game {
                          feet: V3(pos.x, max(pos.y, 0), pos.z), wading: wading)
 
         updateCamera(dt: dt)
+    }
+
+    /// Whether the player is close enough to take a crystal. The gem floats a
+    /// metre off the ground, so this measures to the body rather than the feet.
+    private func inReach(_ s: Shard) -> Bool {
+        let flat = length(V2(s.pos.x - pos.x, s.pos.z - pos.z))
+        return flat < Shards.pickRadius && abs(s.gem(time: time).y - (pos.y + 0.6)) < Shards.pickHeight
     }
 
     /// Wears down any goo under the impact point. Returns whether it hit any.

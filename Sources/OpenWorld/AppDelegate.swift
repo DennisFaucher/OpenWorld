@@ -72,7 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let device = MTLCreateSystemDefaultDevice() else { fatalError("No Metal device available") }
-        renderer = Renderer(device: device)
+        Save.enabled = true
+        renderer = Renderer(device: device, save: Save.load())
+        renderer.game.onShard = { [weak self] _ in self?.saveProgress() }
 
         let view = GameView(frame: NSRect(x: 0, y: 0, width: 1440, height: 900), device: device)
         view.input = renderer.input
@@ -92,6 +94,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) { saveProgress() }
+
+    /// Written on every pickup and on the way out: the file is a few hundred
+    /// bytes, and losing the crystal you just walked a kilometre for is the one
+    /// failure a player would notice.
+    private func saveProgress() {
+        guard Save.enabled, let renderer else { return }
+        Save.write(Save.state(of: renderer.game))
+    }
 
     private func buildMenu() {
         let main = NSMenu()

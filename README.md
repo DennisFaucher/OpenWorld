@@ -87,6 +87,8 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Aiming and water.** A small ring in the middle of the screen marks where the jet will hit, and a gauge in the corner shows the tank, which turns amber when it is nearly out. The pack holds about fourteen seconds of washing or three seconds of lift, and refills when you swim or wade.
 - **Activity readout.** Beside the tank gauge: footfalls, miles covered on foot and a rough calorie count, in a small pixel-font widget. The step count rides the same walk phase that fires the footfall dust, so it cannot drift from the animation, and swimming or a boat ride counts as travel but not as steps. The font is a 5x6 bitmap built into the composite shader — no text geometry, no font file, no extra pass.
 - **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties). Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
+- **Crystals.** Forty gems scattered over the four islands, placed by rejection sampling against the height function — dry land, walkable slope, nine metres apart — so nothing is hand-placed and they follow an island if it moves. Each is an eight-triangle bipyramid that spins and bobs a metre off the ground with a soft halo behind it, because at forty metres an unadorned one reads as another flower. Walking into one bursts it into gold sparks and ticks the counter above the readout.
+- **Saved progress.** Found crystals, steps and distance go to `~/Library/Application Support/OpenWorld/save.json` on every pickup and on quit. The file is keyed to a hash of the generated field, so a build that moves the crystals drops it rather than marking the wrong ones as taken. Headless renders and `--sim` never read or write it unless `--save PATH` says so.
 - **Boats and piers.** Every island has a plank jetty from the sand out past the drop-off, sited automatically from the coastline, and a boat moored at the end. Stand on the pier, press `E` beside the boat and steer with the same keys you run with: it accelerates to 12 m/s, leans into turns and refuses to run aground, so a cay is ten seconds away instead of a twenty-second swim. `E` again steps you off into the water.
 - **Water clipmap.** Nine rings of 64x64 cells, 1 m at the camera doubling to 256 m, snapped to a single metre-aligned origin so the vertices sit at fixed world positions — the surface does not slide as you walk, which a camera-centred grid always did. 57k triangles instead of 180k.
 - **Water surface.** Summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, a refracted shoreline and animated foam that follows the real coastline. Swimming and wading leave foam and spray behind.
@@ -124,6 +126,8 @@ All code lives in `Sources/OpenWorld/`:
 | `AppDelegate.swift` | Window, menu, and the `MTKView` that turns key/mouse events into input state |
 | `Game.swift` | Player physics, swimming, obstacle push-out, orbit camera with collision, gamepad |
 | `Boat.swift` | Boat physics (throttle, rudder, shallow-water test) and the hull mesh |
+| `Shards.swift` | The collectibles: their generated placement and the gem mesh |
+| `SaveFile.swift` | Progress on disk: what is saved, the layout hash, and the load/write/clear rules |
 | `Particles.swift` | CPU particle pool for wakes, splashes, footfall dust, skids and jet spray |
 | `Spray.swift` | The water jet: aim, the solved ballistic arc, wet patches and the goo splats |
 | `World.swift` | Terrain height and normals, terrain mesh, height texture, props, obstacles |
@@ -139,9 +143,9 @@ All code lives in `Sources/OpenWorld/`:
 
 Playable prototype, `v4.0`. Four milestones are complete. **Look and feel:** terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day. **Character and movement:** variable jump height with coyote time and buffering, camera look-ahead and recentring, a measured 45° walkable limit with sliding, a rigged character with six weight-blended states, and ground-contact particles. **Tools and HUD:** the spray pack, goo washing, hover, the tank gauge, the reticle and the activity readout. **World scale:** an archipelago of four islands, chunked and frustum-culled terrain, per-island LOD, instanced vegetation, a water clipmap, and boats and piers.
 
-Next is the gameplay layer: collectibles and save state, NPCs, audio, and a goal loop so there is something to do.
+**Gameplay** has started: forty crystals to find and a save file behind them. Still to come in this milestone: NPCs, audio, and a goal loop.
 
-The repository is not a complete game — there is no goal, no saving, and no audio. Distant islands cast no shadow (that needs cascades), the goo never respawns, and a boat stays wherever it is left.
+The repository is not a complete game — there is progress but no goal, and no audio. Distant islands cast no shadow (that needs cascades), the goo never respawns, and a boat stays wherever it is left.
 
 ## Notes
 

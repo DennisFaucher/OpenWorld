@@ -13,10 +13,25 @@ if args.contains("--version") {
     exit(0)
 }
 
+/// Progress on disk. Headless runs are hermetic by default — a screenshot must
+/// not collect a crystal or rewrite the session — so saving is opt-in here, by
+/// `--save PATH`, which is also how a test writes to a scratch file instead of
+/// the player's real one.
+if let i = args.firstIndex(of: "--save"), i + 1 < args.count {
+    Save.enabled = true
+    Save.url = URL(fileURLWithPath: args[i + 1])
+}
+if args.contains("--reset-save") { Save.clear() }
+
 /// Reads `--name a b c` off the command line.
 func argValues(_ name: String, _ count: Int) -> [Float]? {
     guard let j = args.firstIndex(of: name), j + count < args.count else { return nil }
     return (1...count).compactMap { Float(args[j + $0]) }
+}
+
+if args.contains("--dump-shaders") {
+    try! Shaders.source.write(toFile: "/Users/faucherd/Downloads/tmp/shaders.metal", atomically: true, encoding: .utf8)
+    exit(0)
 }
 
 /// `--slope-scan` histograms the terrain gradient, which is how the walk limit
@@ -46,13 +61,27 @@ if args.contains("--slope-scan") {
     exit(0)
 }
 
+/// `--shard-scan` prints the generated crystal field, which is how a test
+/// position is picked without running around the archipelago.
+if args.contains("--shard-scan") {
+    let field = Shards.field(obstacles: World.buildProps().obstacles)
+    print("shards: \(field.count)  layout \(Save.layoutHash(field))")
+    for (i, s) in field.enumerated() {
+        let deg = acos(clampf(World.normal(s.pos.x, s.pos.z).y, -1, 1)) * 180 / Float.pi
+        print(String(format: "%3d  x %7.2f  z %7.2f  y %5.2f  slope %4.1f", i, s.pos.x, s.pos.z, s.pos.y, deg))
+    }
+    exit(0)
+}
+
 /// `--sim N [--walk] [--jump F D]` steps the simulation and prints the player
 /// state each frame. Jump timing is the one part of movement feel that a
 /// screenshot cannot show, so it is measured here instead.
 if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     let frames = Int(args[i + 1]) ?? 90
     let input = Input()
-    let game = Game(obstacles: World.buildProps().obstacles)
+    let game = Game(obstacles: World.buildProps().obstacles,
+                    save: Save.enabled ? Save.load() : nil)
+    if Save.enabled { game.onShard = { [unowned game] _ in Save.write(Save.state(of: game)) } }
     if let p = argValues("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
     }
@@ -86,6 +115,7 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
         }
     }
     print("frame       x       y       z      vy  ground swim   fov  slope |   hipL   hipR  kneeL  spd")
+    var picked = game.found.count
     for f in 0..<frames {
         for s in jumpSpecs where s.at == f {
             input.jumpQueued = true
@@ -100,7 +130,12 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
                      acos(clampf(ny, -1, 1)) * 180 / Float.pi,
                      game.pose.hipL * 180 / Float.pi, game.pose.hipR * 180 / Float.pi,
                      game.pose.kneeL * 180 / Float.pi, game.speedNorm))
+        if game.found.count != picked {
+            picked = game.found.count
+            print("      ** shard taken: \(picked)/\(game.shards.count)")
+        }
     }
+    print("shards \(game.found.count)/\(game.shards.count), steps \(game.steps)")
     exit(0)
 }
 
@@ -109,7 +144,8 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
 if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     let values = argValues
     guard let device = MTLCreateSystemDefaultDevice() else { fatalError("No Metal device available") }
-    let renderer = Renderer(device: device, hour: values("--hour", 1)?.first ?? 12)
+    let renderer = Renderer(device: device, hour: values("--hour", 1)?.first ?? 12,
+                            save: Save.enabled ? Save.load() : nil)
     let game = renderer.game
     if let p = values("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
@@ -164,6 +200,11 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     }
     let size = values("--size", 2) ?? [1920, 1080]
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))
+    // `--collect` takes every crystal in reach, so a frame can be rendered after
+    // a pickup without steering the player onto one.
+    if args.contains("--shards") {
+        print("shards: \(game.found.count)/\(game.shards.count)")
+    }
     if args.contains("--stats") {
         let chunks = renderer.statsChunks, tris = renderer.statsTriangles
         let levels = renderer.statsLevels

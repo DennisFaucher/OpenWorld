@@ -512,7 +512,20 @@ enum Shaders {
         float d = length(in.uv);
         if (d > 1.0) { discard_fragment(); }
         float a = in.col.a * smoothstep(1.0, 0.45, d);
-        if (in.kind > 4.5) {
+        if (in.kind > 6.5) {
+            // Crystal halo: a soft radial falloff and nothing else, tighter than
+            // the default so it glows around the gem rather than fogging the
+            // ground behind it.
+            float k = smoothstep(1.0, 0.0, d);
+            a *= k * k;
+        } else if (in.kind > 5.5) {
+            // A pickup glint: four thin arms and a hot core, so it reads as a
+            // sparkle instead of another disc of spray.
+            float2 q = abs(in.uv);
+            float h = smoothstep(0.92, 0.05, q.x) * smoothstep(0.28, 0.0, q.y);
+            float v = smoothstep(0.92, 0.05, q.y) * smoothstep(0.28, 0.0, q.x);
+            a = in.col.a * max(max(h, v), smoothstep(0.32, 0.0, d));
+        } else if (in.kind > 4.5) {
             // Goo: a lobed splat with a ragged rim, so it reads as something
             // stuck to the ground rather than as a shadow.
             float n = vnoise(in.wp.xz * 4.0) * 0.55 + vnoise(in.wp.xz * 11.0 + 2.7) * 0.45;
@@ -630,6 +643,10 @@ enum Shaders {
         int4 steps;
         int4 miles;
         int4 calories;
+        /// "found/total", pre-formatted: four characters here and the fifth in
+        /// the next register, whose `.y` is 1 once every crystal is found.
+        int4 shards;
+        int4 shardTail;
     };
 
     static uint glyphBits(int c) {
@@ -660,6 +677,7 @@ enum Shaders {
             case 76: return 0x2108421F;   // 'L'
             case 75: return 0x232E4A31;   // 'K'
             case 46: return 0x000006;   // '.'
+            case 47: return 0x2221110;  // '/'
             default: return 0u;
         }
     }
@@ -781,6 +799,32 @@ enum Shaders {
                               textRow(p, v2, vs, hud.calories, 3));
             c = mix(c, float3(0.62, 0.80, 0.90), label * 0.78);
             c = mix(c, float3(0.98, 0.99, 1.0), value);
+        }
+
+        // Crystal counter, in its own pill above the readout. It is the only
+        // progress the game keeps, so it stays on screen rather than living in a
+        // menu; the diamond is the icon, so no word has to fit in the font.
+        {
+            float2 pc = float2(116.0 * sc, 130.0 * sc);
+            float2 ph = float2(61.0 * sc, 17.0 * sc);
+            float sd = roundBox(p, pc, ph, 8.0 * sc);
+            c = mix(c, float3(0.04, 0.07, 0.11), (1.0 - smoothstep(-sc, sc, sd)) * 0.42);
+
+            float2 q = abs(p - float2(69.0 * sc, 130.0 * sc));
+            float dia = 1.0 - smoothstep(-sc, sc, (q.x + q.y) - 7.0 * sc);
+            // Lit from above, so it reads as a facet rather than a flat lozenge.
+            float shine = smoothstep(-7.0 * sc, 7.0 * sc, p.y - 130.0 * sc);
+            float3 gem = mix(float3(1.0, 0.66, 0.18), float3(1.0, 0.90, 0.55), shine);
+            c = mix(c, gem, dia);
+
+            float cs = max(2.0, round(2.6 * sc));
+            // `textRow` takes the top-left corner and measures y downwards, so
+            // this is the top of the glyphs, not the baseline.
+            float2 co = float2(86.0 * sc, 137.0 * sc);
+            float txt = max(textRow(p, co, cs, hud.shards, 4),
+                            textRow(p, co + float2(24.0 * cs, 0.0), cs, hud.shardTail, 1));
+            bool all = hud.shardTail.y > 0.5;
+            c = mix(c, all ? float3(1.0, 0.88, 0.55) : float3(0.98, 0.99, 1.0), txt);
         }
 
         // Interaction hint. This is the only prompt in the game, so it has to be
