@@ -395,7 +395,10 @@ enum Shaders {
                          const device float2* grid [[buffer(0)]],
                          constant Frame& f [[buffer(1)]],
                          constant Obj& o [[buffer(2)]]) {
-        float2 xz = grid[vid] + o.tint.xy;
+        // tint = (origin.x, origin.z, cell size, unused): the ring's cells are
+        // laid out on a grid that is snapped to whole cells in world space, so
+        // the surface stays put while the camera moves.
+        float2 xz = o.tint.xy + grid[vid] * o.tint.z;
         float fade = saturate(1.0 - distance(xz, f.cam.xz) / 300.0);
         float3 w = waveLow(xz, f.cam.w);
         WOut r;

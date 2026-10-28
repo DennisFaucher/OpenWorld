@@ -30,7 +30,7 @@ Fix opportunistically; none block the next milestones.
 3. ~~**Plaza terrace**~~ (fixed). The floor now ends on a modelled stone kerb ring (`World.buildProps`, 72 segments of three quads) plus a narrow stone border band and a contact shadow in the tile shader, so the checker stops on a deliberate edge instead of being cut off by grass. The mud-coloured slope is gone with the rock recolouring from the terrain item.
 4. ~~**Shaded walls look tan/drab**~~ (fixed). The ambient is now a hemispheric three-colour blend with a per-face term (vertical faces facing the sun get a little more warmth), so a building's four walls no longer receive identical light. Contact occlusion is baked into the mesh: `MeshBuilder.groundedBox` ramps the wall colour darker over the lowest ~2.4 m through `quad4` per-corner colours.
 5. ~~**Palm frond undersides are dark.**~~ (fixed). The fronds carry a translucency flag in `nrm.w`; `fs_main` adds `albedo * SUNCOL * saturate(-dot(Ng,V)) * saturate(dot(Ng,L)) * 0.55`, so looking up at a sunlit frond glows green instead of going black.
-6. **Water vertices "swim"** slightly as the camera moves because the grid is camera-centred with non-uniform spacing. Currently hidden by small amplitude; a stable clip-map would fix it.
+6. ~~Water vertices "swim"~~ — fixed by the clipmap (M4).
 7. **Camera** can still clip into the player at its 2.2 m minimum distance when backed into a wall; props' collision is approximated by `topY`.
 8. Player can end up inside an obstacle if spawned/teleported there (push-out is per-frame, not swept).
 9. **Shadow map is re-rendered every frame** at 4096² (terrain + props + player; terrain and props are culled against the 90 m light box, so it is a fraction of that). Only the player actually changes, so caching the static casters would be an easy win if frame time becomes an issue.
@@ -141,7 +141,11 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - New `vs_inst`/`vs_shadow_inst` vertex functions and `mainInstPSO`/`shadowInstPSO`, with the per-instance buffer at index 3 (0 vertices, 1 Frame, 2 Obj). Tint rides in the instance instead of `Obj.tint`, so `fs_main` is unchanged.
   - Palms now vary by yaw and by a non-uniform scale (height and a little width) around a base mesh built at 7 m, instead of being baked one by one from the seed. Frond shape is fixed per variant; `--stats` prints the batch and instance counts.
 - [ ] Shadow cascades, so a distant island casts the shadows it should
-- [ ] Bigger water extent with a stable clip-map grid
+- [x] Bigger water extent with a stable clip-map grid
+  - The water was one camera-centred grid with quadratic spacing: its vertices slid with the camera, so the vertex waves swam. It is now a clipmap — nine 64x64 rings, `1 << level` metres per cell, from 1 m out to ±8 km — and every level is snapped to a **single** origin on whole metres. That anchors the vertices to the world: crossing a metre re-covers the same points with the same lattice, so the surface does not move at all. Water triangles drop from 180k to 57k in nine draws.
+  - One origin for all levels, not one each. Snapping each level to its own cell size looks tighter, but then a ring's hole and the finer square it overlaps disagree by up to a cell: a strip up to 1 m wide loses its water on one side and double-blends it on the other, and that strip travels with the camera. It is nearly invisible in deep water (the seabed behind it is the same dark blue) and obvious in the shallows, which is exactly the case that matters.
+  - Ring seams therefore land exactly on top of each other, and there is no stitching: at the 32 m boundary the fine and coarse edges occupy the same points in xz, and the vertex waves there differ by under a centimetre.
+  - Verified with renders from a beach, a grazing angle, underwater and straight down over a shoreline, plus a fractional player position (the misalignment bug showed up only at non-integer camera positions, which is why integer test spots hid it). "No swimming" is a property of the construction — fixed vertex world positions — not something a still can show.
 - [ ] Boats/piers/bridges connecting islands; fast-travel or loading-free transitions
 
 ### M5: Gameplay layer

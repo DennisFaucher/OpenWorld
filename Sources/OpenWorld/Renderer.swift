@@ -122,8 +122,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let props: GPUMesh
     private let propBatches: [InstancedBatch]
     private let sphere: GPUMesh
+    static let waterCells = 64
+    /// Rings of 64 cells each: 1 m near the camera doubling to 256 m, which is
+    /// +-8 km of open water and 57k triangles instead of 180k.
+    static let waterLevels = 9
+
     private let waterGrid: MTLBuffer
     private let waterIndices: MTLBuffer
+    private let waterRingIndices: MTLBuffer
+    private let waterRingIndexCount: Int
     private let waterIndexCount: Int
     private let heightTexture: MTLTexture
     private let shadowMap: MTLTexture
@@ -329,26 +336,38 @@ final class Renderer: NSObject, MTKViewDelegate {
         let heights = World.heightTexture(size: size)
         heightTexture.replace(region: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0, withBytes: heights, bytesPerRow: size * 4)
 
-        // Water grid: dense near the origin, quadratically sparser outwards.
-        let n = 150, radius: Float = 1500
+        // Water is a clipmap: `Rings * 2` cells across, one ring per octave, and
+        // each ring is snapped to its own cell size in world space. Vertices
+        // therefore never move — a ring jumps by a cell when the camera crosses
+        // one, but the same world points are covered either way, so the waves no
+        // longer swim. The local grid is in whole cells and the shader scales it
+        // by the level's cell size.
+        let n = Renderer.waterCells
+        let block = Float(n / 4)
         var grid: [V2] = []
-        for j in -n...n {
-            for i in -n...n {
-                let u = Float(i) / Float(n), v = Float(j) / Float(n)
-                grid.append(V2(u * abs(u), v * abs(v)) * radius)
+        for j in -(n / 2)...(n / 2) {
+            for i in -(n / 2)...(n / 2) {
+                grid.append(V2(Float(i), Float(j)))
             }
         }
-        var idx: [UInt32] = []
-        let w = UInt32(2 * n + 1)
-        for j in 0..<UInt32(2 * n) {
-            for i in 0..<UInt32(2 * n) {
+        var full: [UInt32] = []
+        var ring: [UInt32] = []
+        let w = UInt32(n + 1)
+        for j in 0..<UInt32(n) {
+            for i in 0..<UInt32(n) {
                 let a = j * w + i, b = a + 1, c = a + w, d = c + 1
-                idx += [a, c, b, b, c, d]
+                full += [a, c, b, b, c, d]
+                // The inner half of a level is covered by the level below it.
+                let x = Float(Int(i)) - Float(n / 2)
+                let z = Float(Int(j)) - Float(n / 2)
+                if abs(x) >= block || abs(z) >= block { ring += [a, c, b, b, c, d] }
             }
         }
         waterGrid = device.makeBuffer(bytes: grid, length: MemoryLayout<V2>.stride * grid.count, options: .storageModeShared)!
-        waterIndices = device.makeBuffer(bytes: idx, length: MemoryLayout<UInt32>.stride * idx.count, options: .storageModeShared)!
-        waterIndexCount = idx.count
+        waterIndices = device.makeBuffer(bytes: full, length: MemoryLayout<UInt32>.stride * full.count, options: .storageModeShared)!
+        waterRingIndices = device.makeBuffer(bytes: ring, length: MemoryLayout<UInt32>.stride * ring.count, options: .storageModeShared)!
+        waterIndexCount = full.count
+        waterRingIndexCount = ring.count
 
         // Shadow map: depth-only target sampled with hardware PCF.
         let smDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Renderer.depthFormat, width: Renderer.shadowMapSize, height: Renderer.shadowMapSize, mipmapped: false)
@@ -588,11 +607,31 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Water last, blended over everything.
         enc.setRenderPipelineState(waterPSO)
         enc.setDepthStencilState(blendDepth)
-        var obj = ObjUniforms(model: matrix_identity_float4x4, normalMat: matrix_identity_float4x4, tint: V4(game.camPos.x, game.camPos.z, 0, 0))
-        enc.setVertexBytes(&obj, length: MemoryLayout<ObjUniforms>.stride, index: 2)
         enc.setVertexBuffer(waterGrid, offset: 0, index: 0)
         enc.setFragmentTexture(heightTexture, index: 0)
-        enc.drawIndexedPrimitives(type: .triangle, indexCount: waterIndexCount, indexType: .uint32, indexBuffer: waterIndices, indexBufferOffset: 0)
+        // One origin for every level, snapped to the finest cell. Snapping each
+        // level to its own cell size would be tighter, but the levels would then
+        // disagree about where the coarse ring's hole is and the fine square
+        // covers: a strip up to one cell wide would lose its water on one side
+        // and double-blend it on the other, and that strip would follow the
+        // camera around. A shared origin makes every hole exactly the size of
+        // the level below it. The coarse rings can then slide by a metre when
+        // the origin steps, which is invisible: the vertex waves have faded out
+        // by 300 m and the far rings are flat.
+        let ox = game.camPos.x.rounded()
+        let oz = game.camPos.z.rounded()
+        for level in 0..<Renderer.waterLevels {
+            let cell = Float(1 << level)
+            var obj = ObjUniforms(model: matrix_identity_float4x4,
+                                  normalMat: matrix_identity_float4x4,
+                                  tint: V4(ox, oz, cell, 0))
+            enc.setVertexBytes(&obj, length: MemoryLayout<ObjUniforms>.stride, index: 2)
+            enc.drawIndexedPrimitives(type: .triangle,
+                                      indexCount: level == 0 ? waterIndexCount : waterRingIndexCount,
+                                      indexType: .uint32,
+                                      indexBuffer: level == 0 ? waterIndices : waterRingIndices,
+                                      indexBufferOffset: 0)
+        }
 
         // Spray and foam last: it has to sit over the water surface.
         encodeParticles(enc, view: viewM)
