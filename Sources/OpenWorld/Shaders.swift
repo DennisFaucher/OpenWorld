@@ -850,12 +850,17 @@ enum Shaders {
         // middle of the screen is exactly where the water goes. A marker on the
         // ground would work too, but the camera looks *at* the player, so that
         // spot sits behind the character every single time.
-        if (gauge.z > 0.5) {
+        //
+        // It appears with the stream, not permanently: a ring that is always on
+        // screen sits around whatever you happen to be looking at, and on a
+        // distant gem that reads as a force field.
+        if (gauge.z > 0.01) {
             float2 mid = res * 0.5;
             float d = length(p - mid);
             float ring = smoothstep(1.7 * sc, 0.7 * sc, abs(d - 8.0 * sc));
             float pip = smoothstep(2.0 * sc, 0.8 * sc, d);
-            c = mix(c, float3(0.96, 1.0, 1.0), ring * 0.40 + pip * 0.55);
+            float k = saturate(gauge.z);
+            c = mix(c, float3(0.96, 1.0, 1.0), (ring * 0.40 + pip * 0.55) * k);
         }
         return float4(c, 1.0);
     }

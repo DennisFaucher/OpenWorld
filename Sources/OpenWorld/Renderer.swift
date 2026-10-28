@@ -657,8 +657,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// (if any) to show. The shader draws the bar, the readout, the reticle and
     /// the prompt, so none of them needs a pass or any geometry of its own.
     private func setGauge(_ enc: MTLRenderCommandEncoder) {
+        // `.z` is the reticle's strength, so it fades in with the arm instead of
+        // being a permanent ring in the middle of the screen.
         var g = V4(clampf(game.tank, 0, 1), game.tankDry ? 1 : 0,
-                   game.aimImpact != nil ? 1 : 0, Float(game.boardingHint))
+                   game.aimImpact != nil ? game.sprayBlend : 0, Float(game.boardingHint))
         enc.setFragmentBytes(&g, length: MemoryLayout<V4>.stride, index: 0)
         var h = HUDText(steps: game.steps, metres: game.distance, calories: game.calories,
                         found: game.found.count, total: game.shards.count)
