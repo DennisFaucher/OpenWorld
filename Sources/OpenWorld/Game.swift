@@ -147,6 +147,13 @@ final class Game {
         vel = .zero
     }
 
+    /// 0 when `E` would do nothing, 1 next to a boat, 2 aboard a boat that is
+    /// slow enough to step off. Drives the on-screen prompt.
+    var boardingHint: Int {
+        if let i = riding { return abs(boats[i].speed) < 1.5 ? 2 : 0 }
+        return nearestBoatIndex() == nil ? 0 : 1
+    }
+
     /// Nearest boat within stepping distance, which is a little more than the
     /// beam so a boat can be caught from the end of a pier or from the water.
     private func nearestBoatIndex() -> Int? {

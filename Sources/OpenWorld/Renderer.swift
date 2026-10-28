@@ -640,11 +640,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         encodeParticles(enc, view: viewM)
     }
 
-    /// HUD uniforms: water level 0...1, whether the pack is too dry to fire, and
-    /// whether the aim currently reaches anything. The shader draws both the bar
-    /// and the reticle, so neither needs a pass or any geometry of its own.
+    /// HUD uniforms: water level 0...1, whether the pack is too dry to fire,
+    /// whether the aim currently reaches anything, and which interaction prompt
+    /// (if any) to show. The shader draws the bar, the readout, the reticle and
+    /// the prompt, so none of them needs a pass or any geometry of its own.
     private func setGauge(_ enc: MTLRenderCommandEncoder) {
-        var g = V4(clampf(game.tank, 0, 1), game.tankDry ? 1 : 0, game.aimImpact != nil ? 1 : 0, 0)
+        var g = V4(clampf(game.tank, 0, 1), game.tankDry ? 1 : 0,
+                   game.aimImpact != nil ? 1 : 0, Float(game.boardingHint))
         enc.setFragmentBytes(&g, length: MemoryLayout<V4>.stride, index: 0)
         var h = HUDText(steps: game.steps, metres: game.distance, calories: game.calories)
         enc.setFragmentBytes(&h, length: MemoryLayout<HUDText>.stride, index: 1)

@@ -646,10 +646,15 @@ enum Shaders {
             case 57: return 0x1D18BC2E;   // '9'
             case 83: return 0x1F07062E;   // 'S'
             case 84: return 0x3E421084;   // 'T'
+            case 68: return 0x3D18C63E;   // 'D'
             case 69: return 0x3F0F421F;   // 'E'
+            case 79: return 0x1D18C62E;   // 'O'
+            case 82: return 0x3D1F5251;   // 'R'
+            case 86: return 0x2318C544;   // 'V'
             case 80: return 0x3D1F4210;   // 'P'
             case 77: return 0x23BAC631;   // 'M'
             case 73: return 0x3E42109F;   // 'I'
+            case 66: return 0x3D1F463E;   // 'B'
             case 67: return 0x1F08420F;   // 'C'
             case 65: return 0x1D18FE31;   // 'A'
             case 76: return 0x2108421F;   // 'L'
@@ -776,6 +781,25 @@ enum Shaders {
                               textRow(p, v2, vs, hud.calories, 3));
             c = mix(c, float3(0.62, 0.80, 0.90), label * 0.78);
             c = mix(c, float3(0.98, 0.99, 1.0), value);
+        }
+
+        // Interaction hint. This is the only prompt in the game, so it has to be
+        // readable over sand and water alike: white glyphs with a dark drop
+        // shadow rather than a panel, which would sit in the middle of the view.
+        // `gauge.w` is 1 next to a boat and 2 aboard a stopped one.
+        if (gauge.w > 0.5) {
+            bool leave = gauge.w > 1.5;
+            int4 ha = leave ? int4(69, 0, 76, 69) : int4(69, 0, 66, 79);
+            int4 hb = leave ? int4(65, 86, 69, 0) : int4(65, 82, 68, 0);
+            float hs = max(1.0, round(1.9 * sc));
+            float wide = (6.0 * 7.0 - 1.0) * hs;
+            float2 o = float2(res.x * 0.5 - wide * 0.5, res.y * 0.5 + 86.0 * sc);
+            float2 o2 = o + float2(24.0 * hs, 0.0);
+            float m = max(textRow(p, o, hs, ha, 4), textRow(p, o2, hs, hb, 3));
+            float2 sp = p + float2(0.0, 1.5 * sc);
+            float sh = max(textRow(sp, o, hs, ha, 4), textRow(sp, o2, hs, hb, 3));
+            c = mix(c, float3(0.02, 0.04, 0.06), sh * 0.6);
+            c = mix(c, float3(0.98, 0.99, 1.0), m);
         }
 
         // Aim reticle. The stream is solved to land on the eye ray, so the

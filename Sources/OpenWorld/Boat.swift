@@ -7,7 +7,7 @@ import simd
 /// water is shallower than its draft.
 final class Boat {
     static let maxSpeed: Float = 12
-    static let reverseSpeed: Float = 3.5
+    static let reverseSpeed: Float = 4.5
     /// The bow stops where the water is shallower than this.
     static let minDepth: Float = -1.0
     /// How far the hull sits below the water line, and the height of the
@@ -38,16 +38,21 @@ final class Boat {
         speed += (target - speed) * min(1, (abs(throttle) < 0.05 ? 0.7 : 1.5) * dt)
         if abs(speed) < 0.03 { speed = 0 }
 
-        // A boat only answers the stick when it has way on, and backs the other
-        // way when the throttle is reversed.
+        // A boat answers the stick better with way on, and backs the other way
+        // when the throttle is reversed. The rate at rest is what lets a hull
+        // pinned against a beach pivot away instead of being stranded there
+        // (0.22 rad/s was fourteen seconds for a U-turn, which read as stuck).
         let authority = clampf(abs(speed) / Boat.maxSpeed, 0, 1)
-        heading += steer * (0.22 + 0.55 * authority) * dt * (speed < -0.2 ? -1 : 1)
+        heading += steer * (0.55 + 0.55 * authority) * dt * (speed < -0.2 ? -1 : 1)
 
         let f = forward
         let next = pos + f * (speed * dt)
-        let bow = World.height(next.x + f.x * 1.8, next.y + f.y * 1.8)
-        let stern = World.height(next.x - f.x * 1.8, next.y - f.y * 1.8)
-        if bow > Boat.minDepth || stern > Boat.minDepth {
+        // Only the leading end is tested, and only in the direction of travel:
+        // checking the stern too meant that once the boat was nose-in to a beach
+        // nothing could free it, including reverse.
+        let lead: Float = speed < 0 ? -1.8 : 1.8
+        let ahead = World.height(next.x + f.x * lead, next.y + f.y * lead)
+        if ahead > Boat.minDepth {
             speed *= 0.35
         } else {
             pos = next
