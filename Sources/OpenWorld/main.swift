@@ -61,6 +61,17 @@ if args.contains("--slope-scan") {
     exit(0)
 }
 
+/// `--villager-scan` prints where each islander starts, which is how the homes
+/// table is checked against the terrain instead of by eye.
+if args.contains("--villager-scan") {
+    for (i, v) in Villagers.spawn(obstacles: World.buildProps().obstacles).enumerated() {
+        let deg = acos(clampf(World.normal(v.pos.x, v.pos.z).y, -1, 1)) * 180 / Float.pi
+        print(String(format: "%d  home (%6.1f,%6.1f) roam %4.1f  start (%7.2f,%7.2f) h %5.2f slope %4.1f",
+                     i, v.home.x, v.home.y, v.roam, v.pos.x, v.pos.z, v.pos.y, deg))
+    }
+    exit(0)
+}
+
 /// `--shard-scan` prints the generated crystal field, which is how a test
 /// position is picked without running around the archipelago.
 if args.contains("--shard-scan") {
@@ -135,7 +146,9 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
             print("      ** shard taken: \(picked)/\(game.shards.count)")
         }
     }
-    print("shards \(game.found.count)/\(game.shards.count), steps \(game.steps)")
+    let wet = game.villagers.filter { World.height($0.pos.x, $0.pos.z) < 0.5 }.count
+    print("shards \(game.found.count)/\(game.shards.count), steps \(game.steps), "
+          + "villagers \(game.villagers.count) (wet \(wet))")
     exit(0)
 }
 
@@ -202,6 +215,12 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))
     // `--collect` takes every crystal in reach, so a frame can be rendered after
     // a pickup without steering the player onto one.
+    if args.contains("--villagers") {
+        for v in renderer.game.villagers {
+            print(String(format: "villager (%7.2f,%7.2f) h %5.2f facing %5.2f speed %.2f",
+                         v.pos.x, v.pos.z, v.pos.y, v.facing, v.speed))
+        }
+    }
     if args.contains("--shards") {
         print("shards: \(game.found.count)/\(game.shards.count)")
     }

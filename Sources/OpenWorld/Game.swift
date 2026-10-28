@@ -96,6 +96,11 @@ final class Game {
     /// Weighted pose of the states above, advanced every update so headless
     /// shots settle before they render.
     var pose = PlayerPose()
+    /// The parts of the walk cycle the pose functions read, so villagers can be
+    /// posed by the same code without owning a `Game`.
+    var poseClock: PoseClock { PoseClock(time: time, walkPhase: walkPhase, speedNorm: speedNorm) }
+    /// The islanders, updated in place every frame.
+    var villagers: [Villager] = []
     /// Degrees added to the base field of view, so a sprint has a little kick.
     var fovBoost: Float = 0
     let particles = ParticleSystem()
@@ -137,6 +142,7 @@ final class Game {
                 radius: 0.85 + 0.35 * abs(sin($0.x * 1.7 + $0.y * 0.9)))
         }
         shards = Shards.field(obstacles: obstacles)
+        villagers = Villagers.spawn(obstacles: obstacles)
         // A file from a build that placed the crystals somewhere else describes a
         // world that no longer exists, so it is dropped rather than remapped.
         if let save, save.layout == Save.layoutHash(shards) {
@@ -449,6 +455,8 @@ final class Game {
             pos = np
         }
 
+        Villagers.update(&villagers, dt: dt, time: time, player: pos, obstacles: obstacles)
+
         // Collecting. Walking into a crystal takes it, with no key to press: the
         // point of scattering them is to make you want to walk over there, and a
         // prompt would turn that into a chore. One per frame is enough — two in
@@ -472,7 +480,8 @@ final class Game {
         let want = Player.weights(self)
         for i in want.indices { poseWeights[i] += (want[i] - poseWeights[i]) * min(1, 12 * dt) }
         let total = poseWeights.reduce(0, +)
-        pose = total > 1e-4 ? Player.pose(weights: poseWeights.map { $0 / total }, self) : Player.pose(.idle, self)
+        pose = total > 1e-4 ? Player.pose(weights: poseWeights.map { $0 / total }, self)
+            : Player.pose(.idle, poseClock)
         // Aiming overrides the right arm and turns the body, so the nozzle and
         // the stream agree even when the feet are running somewhere else. Only
         // the arm is overridden: the legs keep their own motion.
@@ -613,37 +622,7 @@ final class Game {
     }
 
     private func resolveObstacles(_ p: inout V3) {
-        let r = Game.playerRadius
-        for o in obstacles {
-            let xz = V2(p.x, p.z)
-            if o.round {
-                let d = xz - o.center
-                let l = length(d)
-                let minD = o.half.x + r
-                if l < minD && l > 1e-4 {
-                    let c = o.center + d / l * minD
-                    p.x = c.x
-                    p.z = c.y
-                }
-            } else {
-                let lo = o.center - o.half, hi = o.center + o.half
-                let c = V2(clampf(xz.x, lo.x, hi.x), clampf(xz.y, lo.y, hi.y))
-                let d = xz - c
-                let l = length(d)
-                if l > 1e-5 {
-                    if l < r {
-                        let e = c + d / l * r
-                        p.x = e.x
-                        p.z = e.y
-                    }
-                } else {
-                    // Inside the box: leave through the nearest face.
-                    let dl = xz.x - lo.x, dr = hi.x - xz.x, db = xz.y - lo.y, dt = hi.y - xz.y
-                    let m = min(min(dl, dr), min(db, dt))
-                    if m == dl { p.x = lo.x - r } else if m == dr { p.x = hi.x + r } else if m == db { p.z = lo.y - r } else { p.z = hi.y + r }
-                }
-            }
-        }
+        pushOutOfObstacles(&p, radius: Game.playerRadius, obstacles)
     }
 
     private func cameraBlocked(_ p: V3) -> Bool {

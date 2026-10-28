@@ -68,7 +68,7 @@ enum Shards {
                 // Not on the jetty (it is a prop, not terrain) and not inside a
                 // wall, a tower or a palm's collision shape.
                 if World.pierHeight(x, z) > 0 { continue }
-                if distanceToObstacle(V2(x, z), obstacles) < clearance { continue }
+                if obstacleDistance(V2(x, z), obstacles) < clearance { continue }
                 if length(V2(x, z) - V2(Game.spawn.x, Game.spawn.z)) < 6 { continue }
                 let p = V3(x, h, z)
                 if placed.contains(where: { length($0 - p) < spacing }) { continue }
@@ -80,21 +80,6 @@ enum Shards {
             }
         }
         return out
-    }
-
-    private static func distanceToObstacle(_ p: V2, _ obstacles: [Obstacle]) -> Float {
-        var best = Float.greatestFiniteMagnitude
-        for o in obstacles {
-            let d: Float
-            if o.round {
-                d = length(p - o.center) - o.half.x
-            } else {
-                let q = abs(p - o.center) - o.half
-                d = length(max(q, V2(repeating: 0)))
-            }
-            best = min(best, d)
-        }
-        return best
     }
 
     /// A four-sided bipyramid: eight triangles that read as a cut gem, and each

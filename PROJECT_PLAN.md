@@ -172,6 +172,9 @@ Shipped as v4.0 with three items deliberately deferred: true terrain streaming (
   - Progress is a `SaveState` in `~/Library/Application Support/OpenWorld/save.json`, written on every pickup and on quit, and keyed to a hash of the field so a moved crystal drops the file instead of marking the wrong one taken. Headless runs are hermetic: they neither read nor write it without `--save PATH`.
   - Verified: the field (`--shard-scan`, 40 shards), a pickup and the sparkle (a `--sim` walk with the take printed, then a render mid-burst), the save round trip (pick up, exit, relaunch, `1/40` restored), the counter at 0, 1, 39 and 40 (the last in gold), and that found crystals are not drawn. Not verified live: the file being written on window close.
 - [ ] NPCs / simple AI wanderers, a few interactive buildings
+  - [x] Villagers. Six of them, using the player's rig in different clothes (`Look`) and the same stride functions (`PoseClock`), so a villager is 20 spheres and no new pipeline. They walk between waypoints drawn from the terrain within a home radius, refuse a step that would leave the land, turn towards the player inside 4.5 m, stop, and wave for the first couple of seconds. Idle and walk are blended by speed rather than switched at a threshold. Hand-placed homes (plaza, two beaches, the south slope, the east meadow, the big cay), because these are characters with places to be. Drawn in the shadow pass as well as the scene pass.
+  - Verified: `--villager-scan` for their starts (all on ground under 31 deg), a 900-frame `--sim` with zero villagers ending below sea level, and renders of one walking, one waving on the plaza, one on the cay. Not verified live: whether the wave reads as friendly rather than odd at play speed.
+  - [ ] Interactive buildings (doors that open, a building you can enter)
 - [ ] Audio: ambient waves/birds, footsteps, music hooks via `AVAudioEngine`
 - [ ] Simple quest/goal loop so there is something to *do*
 

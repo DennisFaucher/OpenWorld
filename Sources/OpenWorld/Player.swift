@@ -49,6 +49,30 @@ struct PlayerPose {
     }
 }
 
+/// The bits of a walk cycle's state, so an islander can be posed by the same
+/// functions as the player without owning a `Game`.
+struct PoseClock {
+    var time: Float
+    var walkPhase: Float
+    var speedNorm: Float
+}
+
+/// One character's palette and size. Everyone shares the rig — a villager is the
+/// same body in different clothes — but only the player carries the spray pack.
+struct Look {
+    var shirt: V3
+    var trousers: V3
+    var skin: V3
+    var shoe: V3
+    var straw: V3
+    var band: V3
+    var scale: Float = 1
+    var pack: Bool = true
+
+    static let player = Look(shirt: Player.shirt, trousers: Player.trousers, skin: Player.skin,
+                             shoe: Player.shoe, straw: Player.straw, band: Player.band)
+}
+
 /// The character: an original design, seven primitives per limb, posed by a
 /// `PlayerPose` and drawn from overlapping spheres. Joint heights double as the
 /// rig's proportions, so the feet sit on y = 0 whatever the pose does.
@@ -99,28 +123,29 @@ enum Player {
 
     static func pose(weights: [Float], _ g: Game) -> PlayerPose {
         var out = PlayerPose()
+        let c = g.poseClock
         for (i, st) in State.allCases.enumerated() where weights[i] > 0.001 {
-            out.add(pose(st, g), weights[i])
+            out.add(pose(st, c), weights[i])
         }
         return out
     }
 
-    static func pose(_ st: State, _ g: Game) -> PlayerPose {
+    static func pose(_ st: State, _ c: PoseClock) -> PlayerPose {
         switch st {
-        case .idle: return idlePose(g)
-        case .run: return runPose(g)
+        case .idle: return idlePose(c)
+        case .run: return runPose(c)
         case .rise: return risePose()
         case .fall: return fallPose()
-        case .swim: return swimPose(g)
+        case .swim: return swimPose(c)
         case .slide: return slidePose()
         }
     }
 
     /// Horizontal at the surface: the pitch alone would leave the head under
     /// water, so the body is also lifted.
-    static func swimPose(_ g: Game) -> PlayerPose {
+    static func swimPose(_ c: PoseClock) -> PlayerPose {
         var p = PlayerPose()
-        let ph = g.walkPhase
+        let ph = c.walkPhase
         p.rootPitch = 1.15
         p.bob = 0.62
         p.headPitch = -0.65
@@ -200,10 +225,10 @@ enum Player {
         return p
     }
 
-    static func runPose(_ g: Game) -> PlayerPose {
+    static func runPose(_ c: PoseClock) -> PlayerPose {
         var p = PlayerPose()
-        let ph = g.walkPhase
-        let s = clampf(g.speedNorm, 0, 1.5)
+        let ph = c.walkPhase
+        let s = clampf(c.speedNorm, 0, 1.5)
         let sw = sin(ph)
         p.lean = 0.10 + 0.04 * s
         p.headPitch = -0.12
@@ -225,13 +250,13 @@ enum Player {
     }
 
     /// Weight shifting and a slow breath, arms just clear of the body.
-    static func idlePose(_ g: Game) -> PlayerPose {
+    static func idlePose(_ c: PoseClock) -> PlayerPose {
         var p = PlayerPose()
-        let breath = sin(g.time * 1.7)
+        let breath = sin(c.time * 1.7)
         p.bob = 0.012 * breath
         p.lean = 0.03 + 0.012 * breath
         p.headPitch = -0.02 - 0.015 * breath
-        p.twist = 0.05 * sin(g.time * 0.7)
+        p.twist = 0.05 * sin(c.time * 0.7)
         p.kneeL = 0.06
         p.kneeR = 0.06
         p.outL = 0.16
@@ -243,28 +268,32 @@ enum Player {
         return p
     }
 
-    static func parts(_ p: PlayerPose, pos: V3, facing: Float, tank: Float = 1) -> [(M4, V3)] {
+    static func parts(_ p: PlayerPose, pos: V3, facing: Float, tank: Float = 1,
+                      look: Look = .player) -> [(M4, V3)] {
         var out: [(M4, V3)] = []
         func add(_ m: M4, _ c: V3) { out.append((m, c)) }
 
-        let root = M4.translation(pos + V3(0, p.bob, 0)) * M4.rotationY(facing) * M4.rotationX(p.rootPitch)
+        // The scale sits before every child translation, so one factor resizes
+        // the whole rig without touching a single proportion constant.
+        let root = M4.translation(pos + V3(0, p.bob, 0)) * M4.scale(V3(repeating: look.scale))
+            * M4.rotationY(facing) * M4.rotationX(p.rootPitch)
         let pelvis = root * M4.translation(V3(0, hipY, 0))
         let torso = pelvis * M4.rotationX(p.lean) * M4.rotationY(p.twist)
 
         // Two overlapping spheres read as a waist; one reads as a barrel.
-        add(pelvis * M4.translation(V3(0, 0.02, 0)) * M4.scale(V3(0.285, 0.19, 0.255)), shirt)
-        add(torso * M4.translation(V3(0, 0.23, 0)) * M4.scale(V3(0.315, 0.255, 0.275)), shirt)
+        add(pelvis * M4.translation(V3(0, 0.02, 0)) * M4.scale(V3(0.285, 0.19, 0.255)), look.shirt)
+        add(torso * M4.translation(V3(0, 0.23, 0)) * M4.scale(V3(0.315, 0.255, 0.275)), look.shirt)
 
         let head = torso * M4.translation(V3(0, 0.46, 0)) * M4.rotationX(p.headPitch)
-        add(head * M4.translation(V3(0, 0.17, 0)) * M4.scale(V3(0.28, 0.29, 0.27)), skin)
+        add(head * M4.translation(V3(0, 0.17, 0)) * M4.scale(V3(0.28, 0.29, 0.27)), look.skin)
         for sx: Float in [-1, 1] {
             add(head * M4.translation(V3(sx * 0.10, 0.18, 0.225)) * M4.scale(V3(0.044, 0.054, 0.04)), dark)
         }
 
         let hat = head * M4.translation(V3(0, 0.32, 0)) * M4.rotationX(0.10)
-        add(hat * M4.scale(V3(0.44, 0.042, 0.44)), straw)
-        add(hat * M4.translation(V3(0, 0.08, 0)) * M4.scale(V3(0.25, 0.11, 0.25)), straw)
-        add(hat * M4.translation(V3(0, 0.035, 0)) * M4.scale(V3(0.255, 0.030, 0.255)), band)
+        add(hat * M4.scale(V3(0.44, 0.042, 0.44)), look.straw)
+        add(hat * M4.translation(V3(0, 0.08, 0)) * M4.scale(V3(0.25, 0.11, 0.25)), look.straw)
+        add(hat * M4.translation(V3(0, 0.035, 0)) * M4.scale(V3(0.255, 0.030, 0.255)), look.band)
 
         for sx: Float in [-1, 1] {
             let shoulder = sx < 0 ? p.shoulderL : p.shoulderR
@@ -272,37 +301,39 @@ enum Player {
             let out = sx < 0 ? p.outL : p.outR
             let arm = torso * M4.translation(V3(sx * shoulderX, shoulderY, 0))
                 * M4.rotationZ(sx * out) * M4.rotationX(-shoulder)
-            add(arm * M4.translation(V3(0, -upperArm * 0.5, 0)) * M4.scale(V3(0.10, upperArm * 0.58, 0.10)), shirt)
+            add(arm * M4.translation(V3(0, -upperArm * 0.5, 0)) * M4.scale(V3(0.10, upperArm * 0.58, 0.10)), look.shirt)
             let fore = arm * M4.translation(V3(0, -upperArm, 0)) * M4.rotationX(-elbow)
-            add(fore * M4.translation(V3(0, -foreArm * 0.5, 0)) * M4.scale(V3(0.088, foreArm * 0.60, 0.088)), skin)
-            add(fore * M4.translation(V3(0, -foreArm - 0.02, 0)) * M4.scale(V3(0.092, 0.080, 0.094)), skin)
+            add(fore * M4.translation(V3(0, -foreArm * 0.5, 0)) * M4.scale(V3(0.088, foreArm * 0.60, 0.088)), look.skin)
+            add(fore * M4.translation(V3(0, -foreArm - 0.02, 0)) * M4.scale(V3(0.092, 0.080, 0.094)), look.skin)
         }
 
         // The spray pack: a tank on the back and a nozzle in the right hand,
         // built from the same spheres as the body so it needs no new pass.
         // The tank empties from the bottom, so its level doubles as the only
-        // readout the player gets without a HUD.
-        let level = 0.55 + 0.45 * clampf(tank, 0, 1)
-        let pack = torso * M4.translation(V3(0, 0.24 - 0.27 * (1 - level) * 0.5, -0.31))
-        add(pack * M4.scale(V3(0.20, 0.27 * level, 0.135)), tankColour)
-        add(pack * M4.translation(V3(0, -0.07, -0.02)) * M4.scale(V3(0.205, 0.045, 0.14)), tankBand)
-        let armR = torso * M4.translation(V3(shoulderX, shoulderY, 0))
-            * M4.rotationZ(p.outR) * M4.rotationX(-p.shoulderR)
-        let foreR = armR * M4.translation(V3(0, -upperArm, 0)) * M4.rotationX(-p.elbowR)
-        let hand = foreR * M4.translation(V3(0, -foreArm - 0.02, 0))
-        add(hand * M4.translation(V3(0, -0.09, 0)) * M4.scale(V3(0.042, 0.14, 0.042)), tankBand)
-        add(hand * M4.translation(V3(0, -0.20, 0)) * M4.scale(V3(0.062, 0.055, 0.062)), tankColour)
+        // readout the player gets without a HUD. Villagers carry none.
+        if look.pack {
+            let level = 0.55 + 0.45 * clampf(tank, 0, 1)
+            let pack = torso * M4.translation(V3(0, 0.24 - 0.27 * (1 - level) * 0.5, -0.31))
+            add(pack * M4.scale(V3(0.20, 0.27 * level, 0.135)), tankColour)
+            add(pack * M4.translation(V3(0, -0.07, -0.02)) * M4.scale(V3(0.205, 0.045, 0.14)), tankBand)
+            let armR = torso * M4.translation(V3(shoulderX, shoulderY, 0))
+                * M4.rotationZ(p.outR) * M4.rotationX(-p.shoulderR)
+            let foreR = armR * M4.translation(V3(0, -upperArm, 0)) * M4.rotationX(-p.elbowR)
+            let hand = foreR * M4.translation(V3(0, -foreArm - 0.02, 0))
+            add(hand * M4.translation(V3(0, -0.09, 0)) * M4.scale(V3(0.042, 0.14, 0.042)), tankBand)
+            add(hand * M4.translation(V3(0, -0.20, 0)) * M4.scale(V3(0.062, 0.055, 0.062)), tankColour)
+        }
 
         for sx: Float in [-1, 1] {
             let hip = sx < 0 ? p.hipL : p.hipR
             let knee = sx < 0 ? p.kneeL : p.kneeR
             let ankle = sx < 0 ? p.ankleL : p.ankleR
             let leg = pelvis * M4.translation(V3(sx * 0.125, 0, 0)) * M4.rotationX(-hip)
-            add(leg * M4.translation(V3(0, -thigh * 0.5, 0)) * M4.scale(V3(0.145, thigh * 0.57, 0.15)), trousers)
+            add(leg * M4.translation(V3(0, -thigh * 0.5, 0)) * M4.scale(V3(0.145, thigh * 0.57, 0.15)), look.trousers)
             let lower = leg * M4.translation(V3(0, -thigh, 0)) * M4.rotationX(-knee)
-            add(lower * M4.translation(V3(0, -shin * 0.5, 0)) * M4.scale(V3(0.125, shin * 0.57, 0.13)), trousers)
+            add(lower * M4.translation(V3(0, -shin * 0.5, 0)) * M4.scale(V3(0.125, shin * 0.57, 0.13)), look.trousers)
             let foot = lower * M4.translation(V3(0, -shin, 0)) * M4.rotationX(-ankle)
-            add(foot * M4.translation(V3(0, -0.03, 0.05)) * M4.scale(V3(0.125, 0.08, 0.185)), shoe)
+            add(foot * M4.translation(V3(0, -0.03, 0.05)) * M4.scale(V3(0.125, 0.08, 0.185)), look.shoe)
         }
 
         return out

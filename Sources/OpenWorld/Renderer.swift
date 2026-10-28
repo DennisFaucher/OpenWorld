@@ -610,8 +610,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawProps(enc, viewProj: vp, cam: game.camPos)
         enc.setRenderPipelineState(mainPSO)
         drawPlayer(enc)
+        drawVillagers(enc)
         drawBoats(enc)
         drawShards(enc)
+        drawVillagers(enc)
 
         // Water last, blended over everything.
         enc.setRenderPipelineState(waterPSO)
@@ -967,6 +969,20 @@ final class Renderer: NSObject, MTKViewDelegate {
             let model = M4.translation(p) * M4.rotationY(s.spin(time: game.time))
                 * M4.scale(V3(repeating: s.scale))
             drawMesh(enc, shardMesh, model: model, tint: V4(2.0, 1.72, 1.0, 1))
+        }
+    }
+
+    /// Villagers are the player's rig in different clothes, so they cost nothing
+    /// to draw but one more set of sphere transforms each. They are in the
+    /// shadow pass too, or a crowd standing in the plaza casts no shadows and
+    /// reads as cut-outs.
+    private func drawVillagers(_ enc: MTLRenderCommandEncoder) {
+        for v in game.villagers {
+            let parts = Player.parts(Villagers.pose(v, time: game.time), pos: v.pos,
+                                     facing: v.facing, look: v.look)
+            for (model, colour) in parts {
+                drawMesh(enc, sphere, model: model, tint: V4(colour, 1))
+            }
         }
     }
 

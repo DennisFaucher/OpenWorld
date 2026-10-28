@@ -15,6 +15,58 @@ struct Obstacle {
     var topY: Float
 }
 
+/// Distance from `p` to the nearest obstacle edge in the XZ plane, negative
+/// inside one. Shared by anything that has to place or push a character.
+func obstacleDistance(_ p: V2, _ obstacles: [Obstacle]) -> Float {
+    var best = Float.greatestFiniteMagnitude
+    for o in obstacles {
+        let d: Float
+        if o.round {
+            d = length(p - o.center) - o.half.x
+        } else {
+            let q = abs(p - o.center) - o.half
+            d = length(max(q, V2(repeating: 0)))
+        }
+        best = min(best, d)
+    }
+    return best
+}
+
+/// Pushes `p` out of any obstacle it is inside: a slide along the near face,
+/// which is all a walking character needs. Boxes are escaped through their
+/// nearest side when the centre is somehow already inside.
+func pushOutOfObstacles(_ p: inout V3, radius r: Float, _ obstacles: [Obstacle]) {
+    for o in obstacles {
+        let xz = V2(p.x, p.z)
+        if o.round {
+            let d = xz - o.center
+            let l = length(d)
+            let minD = o.half.x + r
+            if l < minD && l > 1e-4 {
+                let c = o.center + d / l * minD
+                p.x = c.x
+                p.z = c.y
+            }
+        } else {
+            let lo = o.center - o.half, hi = o.center + o.half
+            let c = V2(clampf(xz.x, lo.x, hi.x), clampf(xz.y, lo.y, hi.y))
+            let d = xz - c
+            let l = length(d)
+            if l > 1e-5 {
+                if l < r {
+                    let e = c + d / l * r
+                    p.x = e.x
+                    p.z = e.y
+                }
+            } else {
+                let dl = xz.x - lo.x, dr = hi.x - xz.x, db = xz.y - lo.y, dt = hi.y - xz.y
+                let m = min(min(dl, dr), min(db, dt))
+                if m == dl { p.x = lo.x - r } else if m == dr { p.x = hi.x + r } else if m == db { p.z = lo.y - r } else { p.z = hi.y + r }
+            }
+        }
+    }
+}
+
 final class MeshBuilder {
     var vertices: [Vertex] = []
     var indices: [UInt32] = []
