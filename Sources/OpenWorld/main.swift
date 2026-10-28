@@ -54,13 +54,22 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     let input = Input()
     let game = Game(obstacles: World.buildProps().obstacles)
     if let p = argValues("--pos", 2), p.count == 2 {
-        game.pos = V3(p[0], World.height(p[0], p[1]), p[1])
+        game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
     }
     if let v = argValues("--yaw", 1) { game.camYaw = v[0] }
     if let v = argValues("--pitch", 1) { game.camPitch = v[0] }
     if let v = argValues("--dist", 1) { game.camDist = v[0] }
     if args.contains("--walk") { input.keys.insert(Key.w) }
     if args.contains("--spray") { input.spray = true }
+    // `--ride` starts aboard the home island's boat, so steering and the
+    // hull's reaction to shallow water can be measured without a keyboard.
+    if args.contains("--ride") { game.boardBoat(0) }
+    // `--board` holds the boarding key instead, so the proximity test and the
+    // on/off toggle are exercised the way a player would.
+    if args.contains("--board") { input.keys.insert(Key.e) }
+    // `--turn` holds the right-hand steer, so the rudder and the hull's heel
+    // can be checked on the same run as the throttle.
+    if args.contains("--turn") { input.keys.insert(Key.d) }
     if args.contains("--walk-fast") {
         input.keys.insert(Key.w)
         input.keys.insert(Key.shift)
@@ -103,7 +112,7 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     let renderer = Renderer(device: device, hour: values("--hour", 1)?.first ?? 12)
     let game = renderer.game
     if let p = values("--pos", 2), p.count == 2 {
-        game.pos = V3(p[0], World.height(p[0], p[1]), p[1])
+        game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
     }
     if let v = values("--yaw", 1) { game.camYaw = v[0] }
     if let v = values("--pitch", 1) { game.camPitch = v[0] }
@@ -111,6 +120,8 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     // `--walk` holds forward for the simulated frames so movement, wakes and
     // particles can be checked without a keyboard.
     if args.contains("--walk") { renderer.input.keys.insert(Key.w) }
+    if args.contains("--ride") { game.boardBoat(0) }
+    if args.contains("--board") { renderer.input.keys.insert(Key.e) }
     // `--spray` holds the trigger so the jet and its impact can be rendered;
     // `--spray-frames N` lets go after N frames, so the wet patches can be
     // checked as they dry.

@@ -61,6 +61,22 @@ final class ParticleSystem {
         }
     }
 
+    /// A boat's wake: foam peeling off the stern to either side. Foam only, so
+    /// it stays on the water instead of arcing through the air.
+    func wake(at p: V3, dir: V3, speed: Float) {
+        let side = V3(-dir.z, 0, dir.x)
+        let s = clampf(abs(speed) / 10, 0.2, 1.2)
+        for sign: Float in [-1, 1] {
+            let at = p + side * (sign * Float.random(in: 0.45 ... 0.85))
+                      + dir * Float.random(in: -0.5 ... 0.2)
+            add(Particle(pos: V3(at.x, 0.05, at.z),
+                         vel: side * (sign * Float.random(in: 1.0 ... 2.6)) - dir * 0.5,
+                         life: Float.random(in: 0.6 ... 1.15), maxLife: 1.15,
+                         size: Float.random(in: 0.18 ... 0.34) * (0.55 + s),
+                         tint: V3(0.93, 0.98, 1.0), gravity: 0, drag: 1.0, kind: 1))
+        }
+    }
+
     /// A footfall: a few small puffs that spread and settle back down.
     func footstep(at p: V3, dir: V3, tint: V3, strength: Float) {
         let s = clampf(strength, 0.5, 1.8)

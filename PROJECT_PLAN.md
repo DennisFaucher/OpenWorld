@@ -150,10 +150,16 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - One origin for all levels, not one each. Snapping each level to its own cell size looks tighter, but then a ring's hole and the finer square it overlaps disagree by up to a cell: a strip up to 1 m wide loses its water on one side and double-blends it on the other, and that strip travels with the camera. It is nearly invisible in deep water (the seabed behind it is the same dark blue) and obvious in the shallows, which is exactly the case that matters.
   - Ring seams therefore land exactly on top of each other, and there is no stitching: at the 32 m boundary the fine and coarse edges occupy the same points in xz, and the vertex waves there differ by under a centimetre.
   - Verified with renders from a beach, a grazing angle, underwater and straight down over a shoreline, plus a fractional player position (the misalignment bug showed up only at non-integer camera positions, which is why integer test spots hid it). "No swimming" is a property of the construction — fixed vertex world positions — not something a still can show.
-- [ ] Boats/piers/bridges connecting islands; fast-travel or loading-free transitions
+- [x] Boats and piers
+  - One jetty per island, sited by walking out from the island centre to the waterline and then to the drop-off, so nothing is hand-placed and nothing moves when an island moves. Planks are laid along the pier's own axes as quads, because the box helper is axis-aligned and a rotated jetty built from boxes is not an option.
+  - The deck is a prop but the player's vertical snap asks `World.pierHeight` about it, so the pier is walkable without the terrain mesh (or the water-depth texture) knowing it exists. The snap only consults the deck when the player is already above it, otherwise swimming under the pier would pop them up through the planks.
+  - The boat is a 90-triangle hull with a painted stripe, driven by the same stick the legs use: forward is throttle, sideways is steer. Speed eases toward 12 m/s, the rudder needs way on and reverses when backing up, and the bow and stern are sampled 1.8 m ahead — shallower than a metre and the hull stops, so it cannot sail up a beach. Crossing to the nearest cay is about ten seconds instead of twenty swimming.
+  - Boarding is one edge-triggered key that takes the nearest boat within 3.4 m or steps off the one being ridden, so there is no way to get stuck aboard. The tank does not refill from the surface a hand's width under the hull.
+  - The boat's wake is foam only (`ParticleSystem.wake`), two arms peeling off the stern: droplets thrown up would arc through the air and read as a fountain. Verified with renders moored, under way from behind and from the side, stopped in the shallows, and a 25-second `--sim` for the rudder and the shallow-water stop. The boarding toggle was exercised with `--board` (E held) from the pier, not with a keyboard.
+- [ ] Bridges between islands; fast-travel or loading-free transitions
 
 ### M5: Gameplay layer
-- [ ] Collectibles (coins/shines), HUD (SwiftUI overlay or Metal text), save state
+- [ ] Collectibles (coins/shines), save state; the rest of the HUD (the composite-pass readout covers the tank, the reticle, steps, distance and calories)
 - [ ] NPCs / simple AI wanderers, a few interactive buildings
 - [ ] Audio: ambient waves/birds, footsteps, music hooks via `AVAudioEngine`
 - [ ] Simple quest/goal loop so there is something to *do*

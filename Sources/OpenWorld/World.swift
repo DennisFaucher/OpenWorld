@@ -63,6 +63,65 @@ enum World {
         Island(centre: V2(96, -204), radius: 38, peak: 7, seed: 83),
     ]
 
+    /// A jetty from the sand out to the drop-off, with a boat moored at the end.
+    struct Pier {
+        /// Where the deck meets the sand.
+        var root: V2
+        /// Unit vector from the beach out to sea.
+        var sea: V2
+        var length: Float
+    }
+
+    static let pierDeckY: Float = 0.62
+    static let pierHalfWidth: Float = 1.15
+    static let piers: [Pier] = islands.map { pierSpot($0) }
+
+    /// Boats moor alongside the end of the pier rather than dead astern of it,
+    /// where the deck would hide them from anyone standing on the shore.
+    static let boatMoorings: [(pos: V2, heading: Float)] = piers.map { p in
+        let side = V2(-p.sea.y, p.sea.x)
+        return (p.root + p.sea * (p.length + 1.0) + side * 3.2, atan2(p.sea.x, p.sea.y))
+    }
+
+    /// Picks a pier site by walking out from the island centre: the deck starts
+    /// at the waterline and runs until the sea is deep enough to float a boat,
+    /// so no hand-placed coordinates and nothing to move when an island moves.
+    private static func pierSpot(_ island: Island) -> Pier {
+        let angle: Float = island.home ? 2.52 : 0.4 + island.seed * 0.7
+        let dir = V2(cos(angle), sin(angle))
+        var shore = island.centre + dir * (island.radius * 0.6)
+        var r = island.radius * 0.4
+        while r < island.radius * 1.9 {
+            let p = island.centre + dir * r
+            if height(p.x, p.y) < 0.35 { shore = p; break }
+            r += 0.5
+        }
+        var length: Float = 8
+        var l: Float = 2
+        while l < 34 {
+            let p = shore + dir * l
+            if height(p.x, p.y) < -2.4 { length = l + 1.5; break }
+            l += 0.5
+            length = l
+        }
+        return Pier(root: shore, sea: dir, length: max(length, 6))
+    }
+
+    /// Height of a pier deck at a point, or far below the sea floor elsewhere.
+    /// The deck is not in the terrain mesh — it is a prop — so the player's
+    /// vertical snap asks about it separately.
+    static func pierHeight(_ x: Float, _ z: Float) -> Float {
+        for p in piers {
+            let d = V2(x, z) - p.root
+            let along = dot(d, p.sea)
+            let across = dot(d, V2(-p.sea.y, p.sea.x))
+            if along >= -0.5 && along <= p.length && abs(across) <= pierHalfWidth {
+                return pierDeckY
+            }
+        }
+        return -100
+    }
+
     /// The height of one island at a point, ignoring the others. A point far
     /// enough outside the coastline is always seabed, which is what lets the
     /// caller skip the expensive noise for every island it is nowhere near.
@@ -475,6 +534,54 @@ enum World {
             b.quad(origin: kpt(ki, a0, ky1), u: ti, v: radial, color: kerbCol * 1.10)
             b.quad(origin: kpt(ko, a0, ky0), u: up, v: to, color: kerbCol)
             b.quad(origin: kpt(ki, a0, ky0), u: ti, v: up, color: kerbCol * 0.88)
+        }
+
+        // Piers, one per island: plank deck on posts, running from the sand out
+        // past the drop-off. Laid out along the pier's own axes, so the boxes
+        // that would otherwise be axis-aligned are built as quads.
+        for pier in piers {
+            let side = V2(-pier.sea.y, pier.sea.x)
+            func w(_ along: Float, _ across: Float, _ y: Float) -> V3 {
+                let p = pier.root + pier.sea * along + side * across
+                return V3(p.x, y, p.y)
+            }
+            let planks = max(3, Int(pier.length / 0.72))
+            for i in 0..<planks {
+                let a = Float(i) / Float(planks) * pier.length
+                let e = Float(i + 1) / Float(planks) * pier.length
+                let tone: Float = i % 2 == 0 ? 1.0 : 0.91
+                let col = V3(0.74, 0.55, 0.32) * tone
+                b.quad(origin: w(a, -pierHalfWidth, pierDeckY),
+                       u: w(e, -pierHalfWidth, pierDeckY) - w(a, -pierHalfWidth, pierDeckY),
+                       v: w(a, pierHalfWidth, pierDeckY) - w(a, -pierHalfWidth, pierDeckY),
+                       color: col)
+                // The open sides of the deck: without them the planks read as a
+                // floating ribbon from the water.
+                b.quad(origin: w(a, -pierHalfWidth, pierDeckY - 0.12),
+                       u: w(e, -pierHalfWidth, pierDeckY - 0.12) - w(a, -pierHalfWidth, pierDeckY - 0.12),
+                       v: V3(0, 0.12, 0), color: col * 0.8)
+                b.quad(origin: w(a, pierHalfWidth, pierDeckY - 0.12),
+                       u: w(e, pierHalfWidth, pierDeckY - 0.12) - w(a, pierHalfWidth, pierDeckY - 0.12),
+                       v: V3(0, 0.12, 0), color: col * 0.8)
+            }
+            // Posts down to the sea floor, and a pair of mooring posts at the end.
+            let postCount = max(2, Int(pier.length / 3.2))
+            for i in 0...postCount {
+                let along = Float(i) / Float(postCount) * pier.length
+                for across: Float in [-pierHalfWidth + 0.12, pierHalfWidth - 0.12] {
+                    let p = pier.root + pier.sea * along + side * across
+                    let bed = height(p.x, p.y) - 0.3
+                    b.box(min: V3(p.x - 0.11, bed, p.y - 0.11),
+                          max: V3(p.x + 0.11, pierDeckY, p.y + 0.11),
+                          color: V3(0.5, 0.38, 0.24))
+                }
+            }
+            for across: Float in [-pierHalfWidth, pierHalfWidth] {
+                let p = pier.root + pier.sea * pier.length + side * across
+                b.box(min: V3(p.x - 0.13, pierDeckY - 0.1, p.y - 0.13),
+                      max: V3(p.x + 0.13, pierDeckY + 0.55, p.y + 0.13),
+                      color: V3(0.46, 0.34, 0.2))
+            }
         }
 
         return (b, batches, obstacles)

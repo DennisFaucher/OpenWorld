@@ -122,6 +122,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let props: GPUMesh
     private let propBatches: [InstancedBatch]
     private let sphere: GPUMesh
+    private let boatMesh: GPUMesh
     static let waterCells = 64
     /// Rings of 64 cells each: 1 m near the camera doubling to 256 m, which is
     /// +-8 km of open water and 57k triangles instead of 180k.
@@ -316,6 +317,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let unit = MeshBuilder()
         unit.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 14, segs: 24)
         sphere = GPUMesh(device: device, builder: unit)
+        boatMesh = GPUMesh(device: device, builder: Boat.buildMesh())
         game = Game(obstacles: props.obstacles)
 
         // Spawn override for play-testing: running to a corner of the map to
@@ -603,6 +605,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawProps(enc, viewProj: vp, cam: game.camPos)
         enc.setRenderPipelineState(mainPSO)
         drawPlayer(enc)
+        drawBoats(enc)
 
         // Water last, blended over everything.
         enc.setRenderPipelineState(waterPSO)
@@ -820,6 +823,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawProps(enc, viewProj: lightVP, cam: game.pos)
         enc.setRenderPipelineState(shadowMapPSO)
         drawPlayer(enc)
+        drawBoats(enc)
 
         enc.endEncoding()
     }
@@ -897,6 +901,18 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&obj, length: MemoryLayout<ObjUniforms>.stride, index: 2)
         enc.setVertexBuffer(mesh.vertexBuffer, offset: 0, index: 0)
         enc.drawIndexedPrimitives(type: .triangle, indexCount: mesh.indexCount, indexType: .uint32, indexBuffer: mesh.indexBuffer, indexBufferOffset: 0)
+    }
+
+    /// The hull is modelled with +x forward and its keel on y = 0, so the model
+    /// is sunk by the draft and turned to the boat's heading. `rotationY` takes
+    /// +x to (cos, 0, -sin), hence the quarter turn.
+    private func drawBoats(_ enc: MTLRenderCommandEncoder) {
+        for b in game.boats {
+            let model = M4.translation(V3(b.pos.x, -Boat.draft + b.bob, b.pos.y))
+                * M4.rotationY(b.heading - Float.pi / 2)
+                * M4.rotationX(b.roll)
+            drawMesh(enc, boatMesh, model: model, tint: V4(1, 1, 1, 1))
+        }
     }
 
     private func drawPlayer(_ enc: MTLRenderCommandEncoder) {

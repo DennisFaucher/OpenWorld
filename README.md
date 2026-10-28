@@ -36,13 +36,14 @@ Always use `-c release`. Terrain and prop generation evaluates a few hundred tho
 | Mouse | Orbit the camera (click the window first to capture the cursor) |
 | Left mouse / `F` | Hold to fire the water jet (after the cursor is captured) |
 | Aim down + fire | Lift off on the jet — about three seconds of lift, or fourteen of washing, before the pack runs dry |
+| `E` | Board the boat you are standing beside, or step off the one you are in |
 | Arrow keys | Orbit the camera |
 | `R` | Respawn |
 | `Esc` | Release the captured cursor |
 
-Gamepad: left stick moves, right stick orbits, right trigger sprints, `A` jumps. The jet is mouse or `F` only for now.
+Gamepad: left stick moves (or throttles and steers a boat), right stick orbits, right trigger sprints, `A` jumps, `B` boards and steps off. The jet is mouse or `F` only for now.
 
-The ring in the middle of the screen is where the jet will land; the bar bottom-left is the water left in the pack.
+The ring in the middle of the screen is where the jet will land; the bar bottom-left is the water left in the pack, with the session's steps, miles and calories beside it.
 
 Swimming out into open water and pitching the camera down dips it below the surface.
 
@@ -86,6 +87,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Aiming and water.** A small ring in the middle of the screen marks where the jet will hit, and a gauge in the corner shows the tank, which turns amber when it is nearly out. The pack holds about fourteen seconds of washing or three seconds of lift, and refills when you swim or wade.
 - **Activity readout.** Beside the tank gauge: footfalls, miles covered on foot and a rough calorie count, in a small pixel-font widget. The step count rides the same walk phase that fires the footfall dust, so it cannot drift from the animation, and swimming or a boat ride counts as travel but not as steps. The font is a 5x6 bitmap built into the composite shader — no text geometry, no font file, no extra pass.
 - **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties). Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
+- **Boats and piers.** Every island has a plank jetty from the sand out past the drop-off, sited automatically from the coastline, and a boat moored at the end. Stand on the pier, press `E` beside the boat and steer with the same keys you run with: it accelerates to 12 m/s, leans into turns and refuses to run aground, so a cay is ten seconds away instead of a twenty-second swim. `E` again steps you off into the water.
 - **Water clipmap.** Nine rings of 64x64 cells, 1 m at the camera doubling to 256 m, snapped to a single metre-aligned origin so the vertices sit at fixed world positions — the surface does not slide as you walk, which a camera-centred grid always did. 57k triangles instead of 180k.
 - **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, refracted shoreline, and animated foam along the shore. Swimming and wading leave foam and spray behind.
 - **Ground contact.** Every footfall kicks up dust tinted by the ground it came off — sand, dry grass or rock — plus a wider cloud on landing, a skid trail while sliding, and a scuff when you push into a face too steep to climb.

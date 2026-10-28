@@ -7,6 +7,7 @@ enum Key {
     static let s: UInt16 = 1
     static let d: UInt16 = 2
     static let f: UInt16 = 3
+    static let e: UInt16 = 14
     static let r: UInt16 = 15
     static let w: UInt16 = 13
     static let space: UInt16 = 49
@@ -61,6 +62,10 @@ final class Game {
     var decals: [Decal] = []
     /// Goo splats, in the order they were placed. Washed ones are removed.
     var goos: [Goo] = []
+    /// One boat per pier, moored at the seaward end. Index into `boats` while
+    /// riding; nil on foot.
+    var boats: [Boat] = []
+    var riding: Int?
     var spraying = false
     /// Eases the aiming pose in and out, so the arm does not snap up.
     var sprayBlend: Float = 0
@@ -96,6 +101,8 @@ final class Game {
     private var splashCooldown: Float = 0
     private var camInitialised = false
     private var prevPadJump = false
+    private var prevBoard = false
+    private var wakeTimer: Float = 0
     private var airTime: Float = 0
     private var jumpBuffer: Float = 0
     private var jumpCutArmed = false
@@ -116,6 +123,7 @@ final class Game {
 
     init(obstacles: [Obstacle]) {
         self.obstacles = obstacles
+        boats = World.boatMoorings.map { Boat(pos: $0.pos, heading: $0.heading) }
         goos = Spray.gooSites.map {
             Goo(pos: V3($0.x, World.height($0.x, $0.y), $0.y),
                 radius: 0.85 + 0.35 * abs(sin($0.x * 1.7 + $0.y * 0.9)))
@@ -125,7 +133,45 @@ final class Game {
     func respawn() {
         pos = Game.spawn
         vel = .zero
+        riding = nil
         camInitialised = false
+    }
+
+    /// Puts the player aboard a boat. Used by the boarding toggle and by the
+    /// headless `--ride` flag, so a boat can be tested without a keyboard.
+    func boardBoat(_ i: Int) {
+        guard boats.indices.contains(i) else { return }
+        riding = i
+        let b = boats[i]
+        pos = V3(b.pos.x, Boat.deckY, b.pos.y)
+        vel = .zero
+    }
+
+    /// Nearest boat within stepping distance, which is a little more than the
+    /// beam so a boat can be caught from the end of a pier or from the water.
+    private func nearestBoatIndex() -> Int? {
+        var best: Int?
+        var bestDist: Float = 3.4
+        for (i, b) in boats.enumerated() {
+            let d = length(V2(b.pos.x - pos.x, b.pos.y - pos.z))
+            if d < bestDist {
+                bestDist = d
+                best = i
+            }
+        }
+        return best
+    }
+
+    /// Steps off onto the water beside the hull. Deep water is fine — the swim
+    /// state takes over on the next update.
+    private func leaveBoat(_ i: Int) {
+        riding = nil
+        let b = boats[i]
+        let side = V2(-b.forward.y, b.forward.x) * 1.6
+        let p = b.pos + side
+        pos = V3(p.x, max(World.height(p.x, p.y), Game.swimY), p.y)
+        vel = .zero
+        onGround = false
     }
 
     func update(dt: Float, input: Input) {
@@ -153,6 +199,23 @@ final class Game {
         camPitch = clampf(camPitch, -0.55, 1.35)
         if input.down(Key.r) { respawn() }
 
+        // Boarding. One key for both directions: it takes the nearest boat in
+        // reach, or steps off the one being ridden, so there is no way to be
+        // stuck aboard. Edge-triggered, otherwise holding it would hop in and
+        // out every frame.
+        let padBoard = pad?.buttonB.isPressed ?? false
+        let boardHeld = input.down(Key.e) || padBoard
+        if boardHeld && !prevBoard {
+            if let i = riding {
+                leaveBoat(i)
+            } else if let i = nearestBoatIndex() {
+                riding = i
+                jumpBuffer = 0
+                vel = .zero
+            }
+        }
+        prevBoard = boardHeld
+
         // Aim, tank and impact. The marker, the stream, the thrust and the wash
         // all read the same arc, so no two of them can point somewhere else.
         spraying = (input.spray || input.down(Key.f)) && !swimming && !tankDry
@@ -168,7 +231,9 @@ final class Game {
             // leaves a sliver that keeps the jet sputtering forever.
             if tank <= 0.001 { tank = 0; tankDry = true; spraying = false }
         } else {
-            if swimming || pos.y < 0.45 { tank = min(1, tank + dt * 0.85) }
+            // Only the player's own body in the water refills the pack: sitting
+            // in a boat a hand's width above the surface is not a dip.
+            if (swimming || pos.y < 0.45) && riding == nil { tank = min(1, tank + dt * 0.85) }
             if tankDry && tank > 0.25 { tankDry = false }
         }
         let jetHit = tankDry ? nil : Spray.impact(origin: aimOrigin, dir: aimDir, obstacles: obstacles)
@@ -189,152 +254,187 @@ final class Game {
         let right = V3(cos(camYaw), 0, -sin(camYaw))
         let dir = right * wish.x + fwd * wish.y
 
-        var maxSpeed: Float = 9
-        if input.down(Key.shift) || (pad?.rightTrigger.value ?? 0) > 0.3 { maxSpeed = 14 }
-        let groundHere = World.height(pos.x, pos.z)
-        if swimming {
-            maxSpeed *= 0.55
-        } else if groundHere < -0.2 && onGround {
-            maxSpeed *= 0.85
-        }
-        let accel: Float = (onGround || swimming) ? 14 : 4
         var hv = V2(vel.x, vel.z)
-        // Loose footing. On ground steeper than the walk limit there is no
-        // traction at all, so the slope wins and the player slides down the fall
-        // line whatever the stick says.
-        let nHere = World.normal(pos.x, pos.z)
-        sliding = onGround && !swimming && nHere.y < Game.walkSlopeY
-        if sliding {
-            let dl = max(sqrt(nHere.x * nHere.x + nHere.z * nHere.z), 1e-5)
-            hv += V2(nHere.x, nHere.z) / dl * (Game.slideAccel * dt)
-            hv *= max(0, 1 - Game.slideDrag * dt)
-        } else {
-            hv += (V2(dir.x, dir.z) * maxSpeed - hv) * min(1, accel * dt)
-        }
-
-        // Jumping. Coyote time keeps a jump alive for a moment after walking off
-        // a ledge and the buffer remembers a press made just before landing, so
-        // a jump that "definitely happened" is not swallowed by the frame it
-        // landed on.
-        let padJump = pad?.buttonA.isPressed ?? false
-        let jumpPressed = input.jumpQueued || (padJump && !prevPadJump)
-        prevPadJump = padJump
-        input.jumpQueued = false
-        if jumpPressed { jumpBuffer = Game.jumpBufferTime }
-        jumpBuffer -= dt
-
-        let canJump = onGround || swimming || airTime < Game.coyote
-        if jumpBuffer > 0 && canJump {
-            vel.y = swimming ? 9 : Game.jumpVel
-            onGround = false
-            jumpBuffer = 0
-            airTime = Game.coyote          // a jump consumes the coyote window
-            jumpCutArmed = !swimming       // rising out of water is not cut short
-        }
-        // Variable height: releasing during the rise trims the rest of it, so a
-        // tap is a hop and a hold is a full jump off the same button.
-        let holding = input.down(Key.space) || padJump
-        if jumpCutArmed && !holding && vel.y > 0 {
-            vel.y *= 0.42
-            jumpCutArmed = false
-        }
-
-        // Horizontal move, world bounds, then push out of obstacles.
-        var np = pos
-        np.x += hv.x * dt
-        np.z += hv.y * dt
-        let fromOrigin = V2(np.x, np.z)
-        let dist = length(fromOrigin)
-        if dist > World.boundsRadius {
-            let c = fromOrigin / dist * World.boundsRadius
-            np.x = c.x
-            np.z = c.y
-        }
-        resolveObstacles(&np)
-
-        // The vertical snap below lifts the player onto whatever is under them,
-        // so without this any face is climbable, however steep. Strip the uphill
-        // part of a step into ground past the walk limit and keep the component
-        // that runs along the contour.
-        let nDest = World.normal(np.x, np.z)
-        var blockedBySlope = false
-        if nDest.y < Game.walkSlopeY && World.height(np.x, np.z) > pos.y - 0.05 {
-            let ux = -nDest.x, uz = -nDest.z
-            let ul = sqrt(ux * ux + uz * uz)
-            if ul > 1e-5 {
-                let up = ((np.x - pos.x) * ux + (np.z - pos.z) * uz) / ul
-                if up > 0 {
-                    np.x -= ux / ul * up
-                    np.z -= uz / ul * up
-                    blockedBySlope = true
-                }
-            }
-        }
-
-        // Vertical: gravity, buoyancy in deep water, terrain snap.
-        let g = World.height(np.x, np.z)
-        let deep = g < -1.1
         let wasSwimming = swimming
         let wasGrounded = onGround
         let fallSpeed = vel.y
-        if deep && pos.y < Game.swimY + 0.35 {
-            // Spring towards the swim line, but clamp the displacement: landing
-            // deep used to fling the player out of the water, and every bob back
-            // in re-triggered the splash.
-            let lift = clampf(Game.swimY - pos.y, -0.9, 0.9)
-            vel.y += (lift * 60 - vel.y * 9) * dt + sin(time * 2) * 0.4 * dt
-        } else {
-            // Falling is heavier than rising. That asymmetry is most of what
-            // separates a jump that feels sharp from one that feels floaty, and
-            // the clamp stops a long drop tunnelling through the terrain.
-            vel.y -= (vel.y > 0 ? 30 : 42) * dt
-            vel.y = max(vel.y, -48)
-        }
-        // Jet thrust. With the nozzle aimed at your feet the stream pushes you
-        // up; easing toward a target climb rate, rather than adding an
-        // acceleration, keeps it a hover instead of a rocket. Ordinary spraying
-        // (aim forward) produces no thrust at all, so the jet stays usable.
-        let downAim = -aimDir.y
-        if spraying && downAim > 0.45 {
-            let t = clampf((downAim - 0.45) / 0.5, 0, 1)
-            // Above 42, the falling gravity, or the pack cannot break contact
-            // with the ground at all; the speed cap keeps it a climb rather
-            // than a launch, and a partial aim only a slow one. The tank ends it.
-            vel.y += (44 + 18 * t) * dt
-            vel.y = min(vel.y, 4.0 * t)
-            onGround = false
-        }
-        np.y += vel.y * dt
-        if np.y <= g {
-            np.y = g
-            vel.y = 0
-            onGround = true
-        } else if onGround && vel.y <= 0 && np.y - g < (sliding ? 0.9 : 0.35) {
-            np.y = g
-            vel.y = 0
-        } else {
-            onGround = false
-        }
-        airTime = onGround ? 0 : airTime + dt
-        swimming = deep && np.y < Game.swimY + 0.35
+        /// Ground under the player, pier decks included.
+        var g = World.height(pos.x, pos.z)
+        var blockedBySlope = false
 
-        vel.x = hv.x
-        vel.z = hv.y
-        // Distance only counts ground covered on foot: swimming and a boat ride
-        // are travel, but they are not what the readout is quoting.
-        if !swimming && onGround {
-            distance += length(V2(np.x - pos.x, np.z - pos.z))
+        if let i = riding {
+            // The stick the legs use becomes throttle and rudder: forward is
+            // throttle, sideways is steer. Nothing here applies gravity, so the
+            // hull rides the water line and the player rides the hull.
+            let b = boats[i]
+            b.update(dt: dt, throttle: wish.y, steer: wish.x, time: time)
+            hv = V2(b.forward.x * b.speed, b.forward.y * b.speed)
+            vel = V3(hv.x, 0, hv.y)
+            pos = V3(b.pos.x, Boat.deckY + b.bob, b.pos.y)
+            facing = b.heading
+            onGround = true
+            swimming = false
+            sliding = false
+            airTime = 0
+            jumpBuffer = 0
+            g = Boat.deckY
+            if abs(b.speed) > 2 {
+                wakeTimer -= dt
+                if wakeTimer <= 0 {
+                    wakeTimer = 0.05
+                    let stern = V3(b.pos.x, 0, b.pos.y) - V3(b.forward.x, 0, b.forward.y) * 1.9
+                    particles.wake(at: stern, dir: V3(b.forward.x, 0, b.forward.y), speed: b.speed)
+                }
+            }
+        } else {
+            var maxSpeed: Float = 9
+            if input.down(Key.shift) || (pad?.rightTrigger.value ?? 0) > 0.3 { maxSpeed = 14 }
+            let groundHere = World.height(pos.x, pos.z)
+            if swimming {
+                maxSpeed *= 0.55
+            } else if groundHere < -0.2 && onGround {
+                maxSpeed *= 0.85
+            }
+            let accel: Float = (onGround || swimming) ? 14 : 4
+            var hv = V2(vel.x, vel.z)
+            // Loose footing. On ground steeper than the walk limit there is no
+            // traction at all, so the slope wins and the player slides down the fall
+            // line whatever the stick says.
+            let nHere = World.normal(pos.x, pos.z)
+            sliding = onGround && !swimming && nHere.y < Game.walkSlopeY
+            if sliding {
+                let dl = max(sqrt(nHere.x * nHere.x + nHere.z * nHere.z), 1e-5)
+                hv += V2(nHere.x, nHere.z) / dl * (Game.slideAccel * dt)
+                hv *= max(0, 1 - Game.slideDrag * dt)
+            } else {
+                hv += (V2(dir.x, dir.z) * maxSpeed - hv) * min(1, accel * dt)
+            }
+
+            // Jumping. Coyote time keeps a jump alive for a moment after walking off
+            // a ledge and the buffer remembers a press made just before landing, so
+            // a jump that "definitely happened" is not swallowed by the frame it
+            // landed on.
+            let padJump = pad?.buttonA.isPressed ?? false
+            let jumpPressed = input.jumpQueued || (padJump && !prevPadJump)
+            prevPadJump = padJump
+            input.jumpQueued = false
+            if jumpPressed { jumpBuffer = Game.jumpBufferTime }
+            jumpBuffer -= dt
+
+            let canJump = onGround || swimming || airTime < Game.coyote
+            if jumpBuffer > 0 && canJump {
+                vel.y = swimming ? 9 : Game.jumpVel
+                onGround = false
+                jumpBuffer = 0
+                airTime = Game.coyote          // a jump consumes the coyote window
+                jumpCutArmed = !swimming       // rising out of water is not cut short
+            }
+            // Variable height: releasing during the rise trims the rest of it, so a
+            // tap is a hop and a hold is a full jump off the same button.
+            let holding = input.down(Key.space) || padJump
+            if jumpCutArmed && !holding && vel.y > 0 {
+                vel.y *= 0.42
+                jumpCutArmed = false
+            }
+
+            // Horizontal move, world bounds, then push out of obstacles.
+            var np = pos
+            np.x += hv.x * dt
+            np.z += hv.y * dt
+            let fromOrigin = V2(np.x, np.z)
+            let dist = length(fromOrigin)
+            if dist > World.boundsRadius {
+                let c = fromOrigin / dist * World.boundsRadius
+                np.x = c.x
+                np.z = c.y
+            }
+            resolveObstacles(&np)
+
+            // The vertical snap below lifts the player onto whatever is under them,
+            // so without this any face is climbable, however steep. Strip the uphill
+            // part of a step into ground past the walk limit and keep the component
+            // that runs along the contour.
+            let nDest = World.normal(np.x, np.z)
+            if nDest.y < Game.walkSlopeY && World.height(np.x, np.z) > pos.y - 0.05 {
+                let ux = -nDest.x, uz = -nDest.z
+                let ul = sqrt(ux * ux + uz * uz)
+                if ul > 1e-5 {
+                    let up = ((np.x - pos.x) * ux + (np.z - pos.z) * uz) / ul
+                    if up > 0 {
+                        np.x -= ux / ul * up
+                        np.z -= uz / ul * up
+                        blockedBySlope = true
+                    }
+                }
+            }
+
+            // Vertical: gravity, buoyancy in deep water, terrain snap.
+            g = World.height(np.x, np.z)
+            // A pier deck is a prop, not terrain, so the snap has to be told about
+            // it — but only on the way down: swimming under the deck must not
+            // teleport the player up through it.
+            if pos.y > World.pierDeckY - 0.25 { g = max(g, World.pierHeight(np.x, np.z)) }
+            let deep = g < -1.1
+            if deep && pos.y < Game.swimY + 0.35 {
+                // Spring towards the swim line, but clamp the displacement: landing
+                // deep used to fling the player out of the water, and every bob back
+                // in re-triggered the splash.
+                let lift = clampf(Game.swimY - pos.y, -0.9, 0.9)
+                vel.y += (lift * 60 - vel.y * 9) * dt + sin(time * 2) * 0.4 * dt
+            } else {
+                // Falling is heavier than rising. That asymmetry is most of what
+                // separates a jump that feels sharp from one that feels floaty, and
+                // the clamp stops a long drop tunnelling through the terrain.
+                vel.y -= (vel.y > 0 ? 30 : 42) * dt
+                vel.y = max(vel.y, -48)
+            }
+            // Jet thrust. With the nozzle aimed at your feet the stream pushes you
+            // up; easing toward a target climb rate, rather than adding an
+            // acceleration, keeps it a hover instead of a rocket. Ordinary spraying
+            // (aim forward) produces no thrust at all, so the jet stays usable.
+            let downAim = -aimDir.y
+            if spraying && downAim > 0.45 {
+                let t = clampf((downAim - 0.45) / 0.5, 0, 1)
+                // Above 42, the falling gravity, or the pack cannot break contact
+                // with the ground at all; the speed cap keeps it a climb rather
+                // than a launch, and a partial aim only a slow one. The tank ends it.
+                vel.y += (44 + 18 * t) * dt
+                vel.y = min(vel.y, 4.0 * t)
+                onGround = false
+            }
+            np.y += vel.y * dt
+            if np.y <= g {
+                np.y = g
+                vel.y = 0
+                onGround = true
+            } else if onGround && vel.y <= 0 && np.y - g < (sliding ? 0.9 : 0.35) {
+                np.y = g
+                vel.y = 0
+            } else {
+                onGround = false
+            }
+            airTime = onGround ? 0 : airTime + dt
+            swimming = deep && np.y < Game.swimY + 0.35
+
+            vel.x = hv.x
+            vel.z = hv.y
+            // Distance only counts ground covered on foot: swimming and a boat ride
+            // are travel, but they are not what the readout is quoting.
+            if !swimming && onGround {
+                distance += length(V2(np.x - pos.x, np.z - pos.z))
+            }
+            pos = np
         }
-        pos = np
+
 
         let speed = length(hv)
-        speedNorm = speed / 9
+        speedNorm = riding == nil ? speed / 9 : 0
         if speed > 0.5 {
             let target = atan2(hv.x, hv.y)
             let d = atan2(sin(target - facing), cos(target - facing))
             facing += d * min(1, 14 * dt)
         }
-        walkPhase += min(speed, 11) * dt * 1.5
+        if riding == nil { walkPhase += min(speed, 11) * dt * 1.5 }
 
         let want = Player.weights(self)
         for i in want.indices { poseWeights[i] += (want[i] - poseWeights[i]) * min(1, 12 * dt) }
