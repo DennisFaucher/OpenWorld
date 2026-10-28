@@ -35,7 +35,7 @@ Always use `-c release`. Terrain and prop generation evaluates a few hundred tho
 | `Space` | Jump |
 | Mouse | Orbit the camera (click the window first to capture the cursor) |
 | Left mouse / `F` | Hold to fire the water jet (after the cursor is captured) |
-| Aim down + fire | Lift off on the jet — the pack holds about three seconds of water and refills in the sea |
+| Aim down + fire | Lift off on the jet — about three seconds of lift, or fourteen of washing, before the pack runs dry |
 | Arrow keys | Orbit the camera |
 | `R` | Respawn |
 | `Esc` | Release the captured cursor |
@@ -78,8 +78,9 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 ## What's in it
 
 - **Terrain.** An analytic height function (`World.height`) — value-noise fbm warped into an island profile — sampled into a 240x240 mesh. Sand, grass and rock are blended per vertex by height and slope, with fragment-space detail layered underneath that fades out before it can alias.
-- **Spray pack.** Hold the trigger and the character raises a nozzle and fires a water jet along the camera: a ballistic stream cut off exactly where it lands, a splash at the impact, and a wet patch that dries over a few seconds. The body turns to the jet while the legs keep walking.
-- **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties) and refills when you swim or wade. Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
+- **Spray pack.** Hold the trigger and the character raises a nozzle and fires a water jet: a ballistic stream that lands exactly where the middle of the screen is pointing, cut off at the impact, with a splash and a wet patch that dries over a few seconds. The body turns to the jet while the legs keep walking.
+- **Aiming and water.** A small ring in the middle of the screen marks where the jet will hit, and a gauge in the corner shows the tank, which turns amber when it is nearly out. The pack holds about fourteen seconds of washing or three seconds of lift, and refills when you swim or wade.
+- **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties). Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
 - **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, refracted shoreline, and animated foam along the shore. Swimming and wading leave foam and spray behind.
 - **Ground contact.** Every footfall kicks up dust tinted by the ground it came off — sand, dry grass or rock — plus a wider cloud on landing, a skid trail while sliding, and a scuff when you push into a face too steep to climb.
 - **Underwater.** Absorption fog, caustics on submerged surfaces, and the surface seen from below with the Snell window and total internal reflection.
@@ -89,6 +90,8 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Movement.** Variable jump height with coyote time and input buffering, sprinting, wading and swimming. Ground steeper than 45° can't be walked up — the player slides down the fall line instead, whatever the stick says.
 - **Lighting.** A 4096x4096 directional shadow map with hardware PCF, hemispheric ambient with a baked contact shadow where walls meet the ground, plus HDR rendering with bloom and a highlight-only tone curve.
 - **Camera.** Orbit with collision against terrain and props.
+
+![Aiming the jet at a splat of goo](docs/aim.jpg)
 
 ![Washing goo off the plaza](docs/spray.jpg)
 

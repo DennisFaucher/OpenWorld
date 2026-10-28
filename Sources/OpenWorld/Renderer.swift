@@ -434,6 +434,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.setVertexBuffer(fullscreenQuad, offset: 0, index: 0)
             enc.setFragmentTexture(hdrResolve, index: 0)
             enc.setFragmentTexture(blurTextures[1], index: 1)
+            setGauge(enc)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             enc.endEncoding()
         }
@@ -497,6 +498,14 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         // Spray and foam last: it has to sit over the water surface.
         encodeParticles(enc, view: viewM)
+    }
+
+    /// HUD uniforms: water level 0...1, whether the pack is too dry to fire, and
+    /// whether the aim currently reaches anything. The shader draws both the bar
+    /// and the reticle, so neither needs a pass or any geometry of its own.
+    private func setGauge(_ enc: MTLRenderCommandEncoder) {
+        var g = V4(clampf(game.tank, 0, 1), game.tankDry ? 1 : 0, game.aimImpact != nil ? 1 : 0, 0)
+        enc.setFragmentBytes(&g, length: MemoryLayout<V4>.stride, index: 0)
     }
 
     private func encodeParticles(_ enc: MTLRenderCommandEncoder, view: M4) {
@@ -746,6 +755,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.setVertexBuffer(fullscreenQuad, offset: 0, index: 0)
             enc.setFragmentTexture(hdrResolve, index: 0)
             enc.setFragmentTexture(blurTextures[1], index: 1)
+            setGauge(enc)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             enc.endEncoding()
         }

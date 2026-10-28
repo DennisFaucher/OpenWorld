@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v2.0 released — M1 (look and feel), M2 (character and movement) and M3 (spray pack) complete; M4 next
+## Status: v2.0 released — M1 (look and feel), M2 (character and movement) and M3 (spray pack) complete, M3 polished after v2.0 with aimed firing, a reticle and a tank gauge; M4 next
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -107,9 +107,14 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
 - [x] Hold-to-spray water jet: nozzle in the right hand, ballistic stream cut at the impact, splash, and a wet patch that dries (`Spray.swift`)
   - Particles stayed on the CPU. The plan said GPU, but at ~1200 live droplets the integration is a fraction of a millisecond and the billboard expansion was the only real cost, so the existing path was kept and the pool raised from 600 to 2400. A compute system only pays off an order of magnitude above this.
 - [x] Hover variant with a limited tank that refills in water
-  - Thrust only above 42 m/s², the falling gravity, or the pack cannot break contact with the ground at all; the climb rate is capped so it reads as a hover rather than a launch. The tank lasts ~3.3 s of spray (`0.30`/s drain) and refills at `0.55`/s while swimming or wading, with a 25% re-arm threshold so the jet does not stutter at empty. The tank mesh shrinks with the level: it is the only readout without a HUD.
+  - Thrust only above 42 m/s², the falling gravity, or the pack cannot break contact with the ground at all; the climb rate is capped so it reads as a hover rather than a launch. The tank refills at `0.85`/s while swimming or wading, with a 25% re-arm threshold so the jet does not stutter at empty, and the tank mesh on the back shrinks with the level.
+  - One drain rate was wrong for both jobs: washing a splat and lifting yourself cost the same, so a tank long enough to wash with was a jetpack. The drain is now `0.07`/s with an extra `0.26`/s once the aim is more than ~25° down — about fourteen seconds of washing or three of lift.
+- [x] Aiming, reticle and tank gauge
+  - The first version fired along the camera direction. With 5.5 m/s² of gravity that lands metres short on any downward aim, so the stream fell visibly short of the splat it was pointed at and the only way to hit anything was to walk into range and guess. `Spray.aim` now marches the eye ray and solves the elevation that carries the arc *through* the point under the middle of the screen (flatter of the two solutions), so the water goes where you look.
+  - A world-space marker on the ground was tried first and never appeared: the camera looks at the player, so the aim point is always hidden behind their body. The marker is a screen-space ring instead, which is exactly truthful once the arc is solved to the eye-ray hit, and it costs nothing — it is drawn in the composite pass. The boom anchor also moved from 1.5 m to 2.15 m so the character sits low in frame and the ground being aimed at is visible past them.
+  - The tank bar lives in the same composite pass (pixel-space rounded rect, dark frame, fill from the bottom, amber under 25%) — no extra pass, no HUD geometry, no text. Verified headlessly at full, ~15% and empty.
 - [x] Interactable targets: twelve goo splats on the plaza and the paths that the jet washes away
-  - Ground only. Splats are lobed quads drawn in the particle buffer (`kind` 5), shrinking as their health drops; the splash is tinted green while a splat is being washed. Walls would need a second quad orientation and are left for later.
+  - Ground only. Splats are lobed quads drawn in the particle buffer (`kind` 5), shrinking as their health drops; the splash is tinted green while a splat is being washed. Walls would need a second quad orientation and are left for later. A splat counts as hit within `radius + 0.35` m, because by the time the jet lands the water has already spread over the rim.
 
 ### M4: World scale and streaming
 - [ ] Move from one 240-unit island to an archipelago: chunked terrain with LOD and frustum culling

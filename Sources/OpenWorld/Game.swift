@@ -68,6 +68,11 @@ final class Game {
     /// and the pose so they cannot disagree.
     var aimDir = V3(0, 0, 1)
     var aimOrigin = V3.zero
+    /// Where the jet would land right now. The reticle is drawn at the middle of
+    /// the screen and only needs to know that there is a landing; the point
+    /// itself is here because aiming and firing share one arc. Nil when the pack
+    /// is dry or the stream reaches nothing.
+    var aimImpact: V3?
     /// Water left in the pack, 1 = full. The jet empties it and water refills
     /// it; `tankDry` keeps it off until there is enough for another burst.
     var tank: Float = 1
@@ -140,22 +145,26 @@ final class Game {
         camPitch = clampf(camPitch, -0.55, 1.35)
         if input.down(Key.r) { respawn() }
 
-        // Spray trigger and tank. `swimming` is last frame's, which is all a
-        // refill needs. A dry pack stays off until it has taken on enough water
-        // to be worth firing, so the jet does not stutter at empty.
+        // Aim, tank and impact. The marker, the stream, the thrust and the wash
+        // all read the same arc, so no two of them can point somewhere else.
         spraying = (input.spray || input.down(Key.f)) && !swimming && !tankDry
+        let aim = Spray.aim(self)
+        aimDir = aim.dir
+        aimOrigin = aim.origin
         if spraying {
-            tank -= dt * 0.30
+            // Washing is cheap and lifting yourself is not: at one rate, a
+            // five-second wash and a hover burst were the same thing.
+            let hover = clampf((-aimDir.y - 0.45) / 0.5, 0, 1)
+            tank -= dt * (0.07 + 0.26 * hover)
             // The drain has to be able to reach zero: clamping at 0 each frame
             // leaves a sliver that keeps the jet sputtering forever.
             if tank <= 0.001 { tank = 0; tankDry = true; spraying = false }
-            let aim = Spray.aim(self)
-            aimDir = aim.dir
-            aimOrigin = aim.origin
         } else {
-            if swimming || pos.y < 0.45 { tank = min(1, tank + dt * 0.55) }
+            if swimming || pos.y < 0.45 { tank = min(1, tank + dt * 0.85) }
             if tankDry && tank > 0.25 { tankDry = false }
         }
+        let jetHit = tankDry ? nil : Spray.impact(origin: aimOrigin, dir: aimDir, obstacles: obstacles)
+        aimImpact = jetHit?.pos
 
         // Movement input, relative to the camera.
         var mx: Float = (input.down(Key.d) ? 1 : 0) - (input.down(Key.a) ? 1 : 0)
@@ -378,11 +387,10 @@ final class Game {
         // Water jet. A single arc per frame gives the impact point, so the
         // splash and the wet patch land where the stream reads as landing.
         if spraying {
-            let hit = Spray.impact(origin: aimOrigin, dir: aimDir, obstacles: obstacles)
             particles.jet(from: aimOrigin, dir: aimDir,
-                          life: hit.map { $0.time * 1.06 } ?? 1,
+                          life: jetHit.map { $0.time * 1.06 } ?? 1,
                           dt: dt, rate: 0.35 + 0.65 * tank)
-            if let hit = hit {
+            if let hit = jetHit {
                 // Washing goo tints the splash, so the spray reads as doing
                 // something even before the splat is gone.
                 let washing = washGoo(at: hit.pos, dt: dt)
@@ -406,7 +414,9 @@ final class Game {
         var washing = false
         for i in goos.indices {
             let d = length(V2(goos[i].pos.x - p.x, goos[i].pos.z - p.z))
-            if d < goos[i].radius {
+            // A margin past the splat itself: by the time the jet lands, the
+            // water has already spread, so the rim is as wet as the middle.
+            if d < goos[i].radius + 0.35 {
                 goos[i].health -= dt * 0.9
                 washing = true
             }
@@ -510,7 +520,7 @@ final class Game {
         // pulled in, or a collapsed boom would leave the camera inside the head.
         let leanFade = clampf((curDist - 2.5) / 4, 0, 1)
         let lean = hs > 0.8 ? V3(flat.x, 0, flat.y) / hs * (min(hs, 14) * 0.07 * leanFade) : .zero
-        let desired = pos + V3(0, 1.5, 0) + lean
+        let desired = pos + V3(0, 2.15, 0) + lean
         if !camInitialised {
             camTarget = desired
             curDist = camDist

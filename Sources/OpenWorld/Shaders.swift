@@ -590,7 +590,8 @@ enum Shaders {
 
     fragment float4 fs_bloom_composite(PostOut in [[stage_in]],
                                        texture2d<float> scene [[texture(0)]],
-                                       texture2d<float> bloom [[texture(1)]]) {
+                                       texture2d<float> bloom [[texture(1)]],
+                                       constant float4& gauge [[buffer(0)]]) {
         constexpr sampler s(filter::linear, address::clamp_to_edge);
         float3 c = scene.sample(s, in.uv).rgb;
         float3 b = bloom.sample(s, in.uv).rgb;
@@ -604,7 +605,55 @@ enum Shaders {
         c = mix(float3(luma), c, 1.06);
         c.b *= 0.99;
         c.r *= 1.01;
-        return float4(saturate(c), 1.0);
+        c = saturate(c);
+
+        // Water gauge: a slim bar in the bottom-left corner. Drawn after the
+        // grade so the scene's warmth does not tint it, and sized in pixels so
+        // it is the same size at any resolution. `gauge.x` is the level, `.y` is
+        // 1 once the pack is too dry to fire and `.z` is 1 while the aim lands
+        // on something (which is what shows the reticle further down).
+        float2 res = float2(scene.get_width(), scene.get_height());
+        float sc = res.y / 1080.0;
+        // p is in pixels from the bottom-left, so the bar fills upwards.
+        float2 p = float2(in.uv.x * res.x, (1.0 - in.uv.y) * res.y);
+        float r = 6.0 * sc;
+        float2 ctr = float2(38.0 * sc, 30.0 * sc + 52.0 * sc);
+        float2 hb = float2(8.0 * sc, 52.0 * sc);
+        {
+            float2 q = abs(p - ctr) - (hb - r);
+            float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+            float frame = 1.0 - smoothstep(-sc, sc, sd);
+            c = mix(c, float3(0.05, 0.09, 0.12), frame * 0.55);
+
+            // Water column, filled from the bottom. Amber once it is nearly out,
+            // because at that point the level is a warning rather than a readout.
+            float2 iq = abs(p - ctr) - (hb - float2(3.0, 3.0) * sc - (r - 2.0 * sc));
+            float isd = length(max(iq, 0.0)) + min(max(iq.x, iq.y), 0.0) - (r - 2.0 * sc);
+            float inside = 1.0 - smoothstep(-sc, sc, isd);
+            float top = ctr.y + hb.y - 3.0 * sc;
+            float bot = ctr.y - hb.y + 3.0 * sc;
+            float surface = mix(bot, top, gauge.x);
+            float filled = 1.0 - smoothstep(-1.5 * sc, 1.5 * sc, p.y - surface);
+            // A narrow band, not a long crossfade: amber and aqua are opposite
+            // colours, so blending them across the whole low range turned the
+            // warning a muddy olive instead of either one.
+            float3 water = mix(float3(0.98, 0.60, 0.26), float3(0.36, 0.80, 0.96),
+                               smoothstep(0.22, 0.28, gauge.x));
+            c = mix(c, water, inside * filled * 0.90);
+        }
+
+        // Aim reticle. The stream is solved to land on the eye ray, so the
+        // middle of the screen is exactly where the water goes. A marker on the
+        // ground would work too, but the camera looks *at* the player, so that
+        // spot sits behind the character every single time.
+        if (gauge.z > 0.5) {
+            float2 mid = res * 0.5;
+            float d = length(p - mid);
+            float ring = smoothstep(1.7 * sc, 0.7 * sc, abs(d - 8.0 * sc));
+            float pip = smoothstep(2.0 * sc, 0.8 * sc, d);
+            c = mix(c, float3(0.96, 1.0, 1.0), ring * 0.40 + pip * 0.55);
+        }
+        return float4(c, 1.0);
     }
     """#
 }
