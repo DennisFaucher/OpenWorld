@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v5.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack), M4 (world scale) and M5 (gameplay layer: crystals, a save file, islanders, synthesised sound and the shrine goal) complete apart from the deferred items in Known issues
+## Status: v5.1 released — M1 (look and feel), M2 (character and movement), M3 (spray pack), M4 (world scale) and M5 (gameplay layer: crystals, a save file, islanders, synthesised sound and the shrine goal) complete apart from the deferred items in Known issues. v5.1 adds Game ▸ Reset Progress…, so starting over does not mean finding a file in Application Support.
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -39,7 +39,7 @@ Fix opportunistically; none block the next milestones.
 12. **Piers and boats have no horizontal collision.** The deck is walkable through `World.pierHeight`, but the pilings are not `Obstacle`s, so you can walk or swim through a post, and a boat can be driven through the jetty and through the other three boats (`resolveObstacles` is skipped while riding). Adding post obstacles and a pier-deck test into `Boat.update`'s bow sample would close both.
 13. **A boat stays wherever it is left.** There is no docking: it does not snap back to its pier, and there is no way to call one from another island, so stranding a boat on a cay is permanent for that session.
 14. **Distant islands cast no shadows**: the shadow box follows the player, so anything outside 90 m of them is unlit by the map.
-15. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v5.0 released).
+15. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v5.1 released).
 16. **Sound has only been judged by ear once.** The first listen found the surf drowning the footsteps and deep water silent; the bed is now 6 dB quieter, the footsteps louder and swimming has strokes. Everything is still measured rather than heard — whether the strokes read as swimming, whether the deposit bells climb pleasantly, and whether the jet is too loud remain open, and `--audio-dump DIR` writes every buffer to disk for exactly this.
 17. **Synthesising at launch costs about a third of a second** before the window appears (12 s of stereo surf is most of it). Parallelising the buffers across cores, or generating the bed lazily once the window is up, would hide it.
 18. **Nothing reacts to the shrine.** All forty crystals light the tower and speed the pack's refill, and that is the whole of it: the islanders do not gather, no dialogue acknowledges it, and the shrine cannot be un-lit. The payoff is a place to look at, not an event.
