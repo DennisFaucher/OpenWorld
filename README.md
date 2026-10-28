@@ -40,7 +40,9 @@ Always use `-c release`. Terrain and prop generation evaluates a few hundred tho
 | `R` | Respawn |
 | `Esc` | Release the captured cursor |
 
-Gamepad: left stick moves, right stick orbits, right trigger sprints, `A` jumps.
+Gamepad: left stick moves, right stick orbits, right trigger sprints, `A` jumps. The jet is mouse or `F` only for now.
+
+The ring in the middle of the screen is where the jet will land; the bar bottom-left is the water left in the pack.
 
 Swimming out into open water and pitching the camera down dips it below the surface.
 

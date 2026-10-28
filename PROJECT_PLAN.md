@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v2.0 released — M1 (look and feel), M2 (character and movement) and M3 (spray pack) complete, M3 polished after v2.0 with aimed firing, a reticle and a tank gauge; M4 next
+## Status: v3.0 released — M1 (look and feel), M2 (character and movement) and M3 (spray pack) complete; M4 next
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -18,7 +18,7 @@ Done and verified via headless renders (live input only smoke-tested):
 - [x] Player: original character from sphere parts, walk cycle, blob shadow, wading, swimming (buoyancy)
 - [x] Physics: gravity, jump, run, terrain snapping, world bounds, circle/AABB obstacle push-out
 - [x] Orbit camera with mouse (captured), arrow keys, gamepad; collision against terrain and obstacles
-- [x] Spray pack: water jet fired along the camera, splash on impact, wet patches that dry, aim pose, hover thrust on a refillable tank, washable goo splats
+- [x] Spray pack: water jet solved onto the eye-ray hit, splash on impact, wet patches that dry, aim pose, hover thrust on a refillable tank, washable goo splats, reticle and tank gauge
 - [x] Headless `--shot` renderer for visual verification
 
 ## Known issues / rough edges
@@ -31,10 +31,12 @@ Fix opportunistically; none block the next milestones.
 4. ~~**Shaded walls look tan/drab**~~ (fixed). The ambient is now a hemispheric three-colour blend with a per-face term (vertical faces facing the sun get a little more warmth), so a building's four walls no longer receive identical light. Contact occlusion is baked into the mesh: `MeshBuilder.groundedBox` ramps the wall colour darker over the lowest ~2.4 m through `quad4` per-corner colours.
 5. ~~**Palm frond undersides are dark.**~~ (fixed). The fronds carry a translucency flag in `nrm.w`; `fs_main` adds `albedo * SUNCOL * saturate(-dot(Ng,V)) * saturate(dot(Ng,L)) * 0.55`, so looking up at a sunlit frond glows green instead of going black.
 6. **Water vertices "swim"** slightly as the camera moves because the grid is camera-centred with non-uniform spacing. Currently hidden by small amplitude; a stable clip-map would fix it.
-7. **Camera** can still clip into the player at its 1.5 min distance when backed into a wall; props' collision is approximated by `topY`.
+7. **Camera** can still clip into the player at its 2.2 m minimum distance when backed into a wall; props' collision is approximated by `topY`.
 8. Player can end up inside an obstacle if spawned/teleported there (push-out is per-frame, not swept).
 9. **Shadow map is re-rendered every frame** at 4096² (terrain + props + player, ~550k triangles). Only the player actually changes, so caching the static casters would be an easy win if frame time becomes an issue.
-10. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v0.1 released).
+10. **Washed goo never comes back.** Twelve splats is the whole game: once they are gone there is nothing left to aim at, and `R` respawns the player, not the world. A respawn timer (or a refill on respawn) closes the loop.
+11. **The gamepad can't spray.** Right trigger sprints and `A` jumps; the jet is mouse or `F` only.
+12. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v3.0 released).
 
 ## Roadmap
 
