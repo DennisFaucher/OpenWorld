@@ -70,6 +70,7 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--sim N` | Skip rendering and print the player state (position, velocity, grounded, swimming, FOV, terrain slope, current pose) for `N` frames — how jump timing and the stride were measured |
 | `--jump F D` | Press jump at frame `F` and hold it for `D` frames, with `--sim` or `--shot`. Repeat the flag for several presses |
 | `--look RAD` | With `--shot`: orbit the finished frame by `RAD` without re-simulating, for a side view of a run cycle |
+| `--stats` | With `--shot`: print how many terrain chunks and triangles the scene pass actually drew |
 | `--slope-scan` | Print a histogram of the terrain gradient — how the 45° walkable limit was picked |
 | `--size W H` | Output resolution, default 1920x1080 |
 
@@ -79,7 +80,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 
 ## What's in it
 
-- **Terrain.** An analytic height function (`World.height`) — value-noise fbm warped into an island profile — sampled into a 240x240 mesh. Sand, grass and rock are blended per vertex by height and slope, with fragment-space detail layered underneath that fades out before it can alias.
+- **Terrain.** An analytic height function (`World.height`) — value-noise fbm warped into an island profile — sampled into a 240x240 mesh, cut into 16 m chunks that are frustum-culled individually (about a quarter of the island is drawn from the plaza, a fifth of the triangles). Sand, grass and rock are blended per vertex by height and slope, with fragment-space detail layered underneath that fades out before it can alias.
 - **Spray pack.** Hold the trigger and the character raises a nozzle and fires a water jet: a ballistic stream that lands exactly where the middle of the screen is pointing, cut off at the impact, with a splash and a wet patch that dries over a few seconds. The body turns to the jet while the legs keep walking.
 - **Aiming and water.** A small ring in the middle of the screen marks where the jet will hit, and a gauge in the corner shows the tank, which turns amber when it is nearly out. The pack holds about fourteen seconds of washing or three seconds of lift, and refills when you swim or wade.
 - **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties). Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.

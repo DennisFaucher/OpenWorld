@@ -119,7 +119,11 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Ground only. Splats are lobed quads drawn in the particle buffer (`kind` 5), shrinking as their health drops; the splash is tinted green while a splat is being washed. Walls would need a second quad orientation and are left for later. A splat counts as hit within `radius + 0.35` m, because by the time the jet lands the water has already spread over the rim.
 
 ### M4: World scale and streaming
-- [ ] Move from one 240-unit island to an archipelago: chunked terrain with LOD and frustum culling
+- [x] Chunked terrain with frustum culling
+  - The 240-unit grid is cut into 15x15 chunks of 16 m, each a contiguous index range into the one shared vertex buffer, with a box taken from the heights it owns. `Frustum` extracts six clip planes from the frame's view-projection and a chunk is skipped when its box is outside any of them. Measured with the new `--stats` flag: 55 of 225 chunks (28k of 115k triangles) from the plaza spawn, 205 from the 110 m overview, where the whole island really is in view.
+  - The shadow pass uses the same routine against the light's orthographic projection. It culls almost nothing today because the shadow frustum is a fixed +-160 box around the island; tying it to the island's bounds (or to the camera) is the next easy win.
+- [ ] Archipelago: several islands instead of one, with the height function and prop placement per island
+- [ ] LOD: coarser index ranges for distant chunks, so a chunk is 512 triangles near and fewer far
 - [ ] Heightmap from tiles/noise per chunk instead of one global mesh; stream by player position
 - [ ] Instanced rendering for palms/bushes/flowers (currently one merged static mesh)
 - [ ] Bigger water extent with a stable clip-map grid

@@ -78,6 +78,36 @@ extension M4 {
     }
 }
 
+/// Six clip-space planes, so a draw range can be skipped when its box is off
+/// screen. Extracted from a view-projection matrix, which is the only place the
+/// camera and the culling rule have to agree.
+struct Frustum {
+    /// xyz = outward normal, w = offset. Inside when `dot(n, p) + w >= 0`.
+    var planes: [V4] = []
+
+    init() {}
+
+    init(_ m: M4) {
+        // Matrix rows, not columns: the clip planes are sums of rows.
+        let r0 = V4(m.columns.0.x, m.columns.1.x, m.columns.2.x, m.columns.3.x)
+        let r1 = V4(m.columns.0.y, m.columns.1.y, m.columns.2.y, m.columns.3.y)
+        let r2 = V4(m.columns.0.z, m.columns.1.z, m.columns.2.z, m.columns.3.z)
+        let r3 = V4(m.columns.0.w, m.columns.1.w, m.columns.2.w, m.columns.3.w)
+        // Metal clip space is -w...w in x and y, 0...w in z.
+        planes = [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2]
+    }
+
+    func contains(_ lo: V3, _ hi: V3) -> Bool {
+        for p in planes {
+            let q = V3(p.x >= 0 ? hi.x : lo.x,
+                       p.y >= 0 ? hi.y : lo.y,
+                       p.z >= 0 ? hi.z : lo.z)
+            if dot(V3(p.x, p.y, p.z), q) + p.w < 0 { return false }
+        }
+        return true
+    }
+}
+
 /// Small deterministic RNG so the island is the same every launch.
 struct RNG {
     var state: UInt64

@@ -72,7 +72,21 @@ enum World {
         return out
     }
 
-    static func buildTerrain() -> MeshBuilder {
+    /// One drawable slice of the terrain: a range of indices into the shared
+    /// vertex buffer, plus the box used to cull it.
+    struct TerrainChunk {
+        var firstIndex: Int
+        var indexCount: Int
+        var lo: V3
+        var hi: V3
+    }
+
+    /// Chunks are cut on a fixed grid so a chunk's indices stay contiguous and
+    /// a whole chunk can be skipped with one draw-range check.
+    static let chunkSize: Float = 16
+    static let chunksPerSide = Int(extent * 2 / chunkSize)
+
+    static func buildTerrain() -> (mesh: MeshBuilder, chunks: [TerrainChunk]) {
         let b = MeshBuilder()
         let cells = Int(extent * 2)
         let sand = V3(0.97, 0.87, 0.56)
@@ -96,14 +110,41 @@ enum World {
             }
         }
         let stride = UInt32(cells + 1)
-        for j in 0..<UInt32(cells) {
-            for i in 0..<UInt32(cells) {
-                let a = j * stride + i, bb = a + 1, c = a + stride, d = c + 1
-                b.tri(a, c, bb)
-                b.tri(bb, c, d)
+        let cs = Int(chunkSize)
+        var chunks: [TerrainChunk] = []
+        chunks.reserveCapacity(chunksPerSide * chunksPerSide)
+        for cj in 0..<chunksPerSide {
+            for ci in 0..<chunksPerSide {
+                let first = b.indices.count
+                let i0 = ci * cs, j0 = cj * cs
+                for j in j0..<(j0 + cs) {
+                    for i in i0..<(i0 + cs) {
+                        let a = UInt32(j) * stride + UInt32(i)
+                        let bb = a + 1, c = a + stride, d = c + 1
+                        b.tri(a, c, bb)
+                        b.tri(bb, c, d)
+                    }
+                }
+                // The chunk's vertical extent comes from the vertices it owns,
+                // so the culling box follows the terrain instead of the grid.
+                var loY = Float.greatestFiniteMagnitude
+                var hiY = -Float.greatestFiniteMagnitude
+                for j in j0...(j0 + cs) {
+                    for i in i0...(i0 + cs) {
+                        let y = b.vertices[j * Int(stride) + i].pos.y
+                        loY = min(loY, y)
+                        hiY = max(hiY, y)
+                    }
+                }
+                let x0 = -extent + Float(i0)
+                let z0 = -extent + Float(j0)
+                chunks.append(TerrainChunk(firstIndex: first,
+                                           indexCount: b.indices.count - first,
+                                           lo: V3(x0, loY, z0),
+                                           hi: V3(x0 + chunkSize, hiY, z0 + chunkSize)))
             }
         }
-        return b
+        return (b, chunks)
     }
 
     static func buildProps() -> (mesh: MeshBuilder, obstacles: [Obstacle]) {

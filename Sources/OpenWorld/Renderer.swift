@@ -70,6 +70,10 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var blurTextures: [MTLTexture] = []
 
     private let terrain: GPUMesh
+    private let terrainChunks: [World.TerrainChunk]
+    /// Terrain submitted in the last scene pass, for `--stats`.
+    private(set) var statsChunks = 0
+    private(set) var statsTriangles = 0
     private let props: GPUMesh
     private let sphere: GPUMesh
     private let waterGrid: MTLBuffer
@@ -209,7 +213,9 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         // World geometry.
         let props = World.buildProps()
-        terrain = GPUMesh(device: device, builder: World.buildTerrain())
+        let built = World.buildTerrain()
+        terrain = GPUMesh(device: device, builder: built.mesh)
+        terrainChunks = built.chunks
         self.props = GPUMesh(device: device, builder: props.mesh)
         let unit = MeshBuilder()
         unit.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 14, segs: 24)
@@ -483,7 +489,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Opaque geometry.
         enc.setRenderPipelineState(mainPSO)
         enc.setDepthStencilState(opaqueDepth)
-        drawMesh(enc, terrain, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
+        drawTerrain(enc, viewProj: vp)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         drawPlayer(enc)
 
@@ -633,11 +639,33 @@ final class Renderer: NSObject, MTKViewDelegate {
         )
         enc.setVertexBytes(&frame, length: MemoryLayout<FrameUniforms>.stride, index: 1)
 
-        drawMesh(enc, terrain, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
+        drawTerrain(enc, viewProj: lightVP)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         drawPlayer(enc)
 
         enc.endEncoding()
+    }
+
+    /// Terrain is drawn chunk by chunk: one box test each, and the grid is the
+    /// whole island, so most of it is behind the camera or past the far plane.
+    /// The shadow pass writes these too, and runs first, so what is left when
+    /// the frame ends is the scene pass — the one the camera decides.
+    private func drawTerrain(_ enc: MTLRenderCommandEncoder, viewProj: M4) {
+        let frustum = Frustum(viewProj)
+        statsChunks = 0
+        statsTriangles = 0
+        var obj = ObjUniforms(model: matrix_identity_float4x4,
+                              normalMat: matrix_identity_float4x4,
+                              tint: V4(1, 1, 1, 1))
+        enc.setVertexBytes(&obj, length: MemoryLayout<ObjUniforms>.stride, index: 2)
+        enc.setVertexBuffer(terrain.vertexBuffer, offset: 0, index: 0)
+        for c in terrainChunks where frustum.contains(c.lo, c.hi) {
+            statsChunks += 1
+            statsTriangles += c.indexCount / 3
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: c.indexCount,
+                                      indexType: .uint32, indexBuffer: terrain.indexBuffer,
+                                      indexBufferOffset: c.firstIndex * MemoryLayout<UInt32>.stride)
+        }
     }
 
     private func drawMesh(_ enc: MTLRenderCommandEncoder, _ mesh: GPUMesh, model: M4, tint: V4) {
