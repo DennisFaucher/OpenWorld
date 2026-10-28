@@ -305,6 +305,9 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     }
     if let n = argValues("--shrine", 1)?.first { game.primeFound(Int(n)) }
     if let n = argValues("--delivered", 1)?.first { game.primeDelivered(Int(n)) }
+    // After the priming, so `--reset-save` means "start from nothing" whichever
+    // order the flags are given in, and so the reset path is exercised headlessly.
+    if args.contains("--reset-save") { game.resetProgress() }
     if let v = argValues("--yaw", 1) { game.camYaw = v[0] }
     if let v = argValues("--pitch", 1) { game.camPitch = v[0] }
     if let v = argValues("--dist", 1) { game.camDist = v[0] }
@@ -379,6 +382,7 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     let game = renderer.game
     if let n = values("--shrine", 1)?.first { game.primeFound(Int(n)) }
     if let n = values("--delivered", 1)?.first { game.primeDelivered(Int(n)) }
+    if args.contains("--reset-save") { game.resetProgress() }
     if let p = values("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
     }

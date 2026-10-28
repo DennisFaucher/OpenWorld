@@ -121,6 +121,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.state = audio.muted ? .on : .off
     }
 
+    /// Clearing the game is a menu item rather than a file to find: the save is a
+    /// few hundred bytes in Application Support, and asking someone to know that
+    /// is not a reset method. Cancelling is the default button — the whole point
+    /// of the alert is to make the mistake hard.
+    @objc private func resetProgress(_ item: NSMenuItem) {
+        // Parking the mouse is the one thing that must happen before a modal
+        // alert: capture disassociates the cursor and hides it, so the buttons
+        // would have no pointer to press them with.
+        (window.contentView as? GameView)?.releaseMouse()
+        let alert = NSAlert()
+        alert.messageText = "Reset progress?"
+        alert.informativeText = "Every crystal goes back on the island, the tower goes dark and the readout returns to zero. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Reset")
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        Save.clear()
+        renderer.game.resetProgress()
+    }
+
     private func buildMenu() {
         let main = NSMenu()
 
@@ -129,6 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit OpenWorld", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
+
+        let gameItem = NSMenuItem()
+        let gameMenu = NSMenu(title: "Game")
+        let reset = gameMenu.addItem(withTitle: "Reset Progress…", action: #selector(resetProgress(_:)), keyEquivalent: "")
+        reset.target = self
+        gameItem.submenu = gameMenu
+        main.addItem(gameItem)
 
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")

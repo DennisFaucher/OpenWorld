@@ -149,10 +149,7 @@ final class Game {
     init(obstacles: [Obstacle], save: SaveState? = nil) {
         self.obstacles = obstacles
         boats = World.boatMoorings.map { Boat(pos: $0.pos, heading: $0.heading) }
-        goos = Spray.gooSites.map {
-            Goo(pos: V3($0.x, World.height($0.x, $0.y), $0.y),
-                radius: 0.85 + 0.35 * abs(sin($0.x * 1.7 + $0.y * 0.9)))
-        }
+        goos = Game.makeGoos()
         shards = Shards.field(obstacles: obstacles)
         villagers = Villagers.spawn(obstacles: obstacles)
         // A file from a build that placed the crystals somewhere else describes a
@@ -165,6 +162,26 @@ final class Game {
             steps = max(0, save.steps)
             distance = max(0, save.metres)
         }
+    }
+
+    /// Back to a brand new game: the crystals return to the field, the tower goes
+    /// dark, the readout goes to zero, the island is messy again and the player is
+    /// standing at the spawn. The live Reset Progress menu item calls this *and*
+    /// deletes the file: clearing only the file would leave `found` in memory and
+    /// the next pickup would write the old progress straight back.
+    func resetProgress() {
+        found.removeAll()
+        banked = 0
+        pending = 0
+        depositClock = 0
+        steps = 0
+        distance = 0
+        goos = Game.makeGoos()
+        decals.removeAll()
+        particles.clear()
+        tank = 1
+        tankDry = false
+        respawn()
     }
 
     /// Headless only: hand the player the first `n` crystals as already found and
@@ -181,6 +198,13 @@ final class Game {
     func primeDelivered(_ n: Int) {
         primeFound(n)
         banked = min(max(0, n), found.count)
+    }
+
+    private static func makeGoos() -> [Goo] {
+        Spray.gooSites.map {
+            Goo(pos: V3($0.x, World.height($0.x, $0.y), $0.y),
+                radius: 0.85 + 0.35 * abs(sin($0.x * 1.7 + $0.y * 0.9)))
+        }
     }
 
     func respawn() {
