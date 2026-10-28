@@ -33,7 +33,7 @@ Fix opportunistically; none block the next milestones.
 6. **Water vertices "swim"** slightly as the camera moves because the grid is camera-centred with non-uniform spacing. Currently hidden by small amplitude; a stable clip-map would fix it.
 7. **Camera** can still clip into the player at its 2.2 m minimum distance when backed into a wall; props' collision is approximated by `topY`.
 8. Player can end up inside an obstacle if spawned/teleported there (push-out is per-frame, not swept).
-9. **Shadow map is re-rendered every frame** at 4096² (terrain + props + player, ~550k triangles). Only the player actually changes, so caching the static casters would be an easy win if frame time becomes an issue.
+9. **Shadow map is re-rendered every frame** at 4096² (terrain + props + player; terrain and props are culled against the 90 m light box, so it is a fraction of that). Only the player actually changes, so caching the static casters would be an easy win if frame time becomes an issue.
 10. **Washed goo never comes back.** Twelve splats is the whole game: once they are gone there is nothing left to aim at, and `R` respawns the player, not the world. A respawn timer (or a refill on respawn) closes the loop.
 11. **The gamepad can't spray.** Right trigger sprints and `A` jumps; the jet is mouse or `F` only.
 12. **Distant islands cast no shadows**: the shadow box follows the player, so anything outside 90 m of them is unlit by the map.
@@ -132,7 +132,10 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Swimming across open water was checked with `--sim`: steady 3.9 m/s, no falling through the sea floor, bounds at 320 m.
 - [ ] LOD: coarser index ranges for distant chunks, so a chunk is 512 triangles near and fewer far
 - [ ] Heightmap from tiles/noise per chunk instead of one global mesh; stream by player position
-- [ ] Instanced rendering for palms/bushes/flowers (currently one merged static mesh)
+- [x] Instanced rendering for palms/bushes/flowers
+  - `World.buildProps` returns the static structures (houses, tower, kerb) as one merged mesh plus `PropBatch` lists: a `PropKind` (three palm shapes, or the unit sphere that bushes and flowers scale), an array of instance transforms, and a culling box. Instances are bucketed into 40 m world blocks, so a batch is a handful of palms rather than a whole island — from the plaza, 41 of 115 batches and 357 of 944 instances are submitted (it was all of them, in both passes).
+  - New `vs_inst`/`vs_shadow_inst` vertex functions and `mainInstPSO`/`shadowInstPSO`, with the per-instance buffer at index 3 (0 vertices, 1 Frame, 2 Obj). Tint rides in the instance instead of `Obj.tint`, so `fs_main` is unchanged.
+  - Palms now vary by yaw and by a non-uniform scale (height and a little width) around a base mesh built at 7 m, instead of being baked one by one from the seed. Frond shape is fixed per variant; `--stats` prints the batch and instance counts.
 - [ ] Shadow cascades, so a distant island casts the shadows it should
 - [ ] Bigger water extent with a stable clip-map grid
 - [ ] Boats/piers/bridges connecting islands; fast-travel or loading-free transitions

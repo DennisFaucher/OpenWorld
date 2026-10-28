@@ -93,6 +93,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Character.** An original design assembled from sphere primitives, rigged two segments per limb, with idle, run, jump, fall, swim and slide poses. States are weight-blended, so a jump eases out of the run instead of snapping.
 - **Movement.** Variable jump height with coyote time and input buffering, sprinting, wading and swimming. Ground steeper than 45° can't be walked up — the player slides down the fall line instead, whatever the stick says.
 - **Lighting.** A 4096x4096 directional shadow map with hardware PCF, hemispheric ambient with a baked contact shadow where walls meet the ground, plus HDR rendering with bloom and a highlight-only tone curve.
+- **Instanced props.** Palms, bushes and flowers are 944 instances drawn from four small base meshes (three palm shapes and a unit sphere), batched into 40 m blocks and frustum-tested like terrain chunks: 41 of 115 batches and 357 of 944 instances are submitted from the plaza. Palms were one merged static mesh before, pushed to the GPU in full in both the main and the shadow pass from anywhere in the world.
 - **Camera.** Orbit with collision against terrain and props.
 
 ![Aiming the jet at a splat of goo](docs/aim.jpg)

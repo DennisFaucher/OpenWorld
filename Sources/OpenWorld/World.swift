@@ -234,10 +234,62 @@ enum World {
         return b
     }
 
-    static func buildProps() -> (mesh: MeshBuilder, obstacles: [Obstacle]) {
+    /// Props are drawn instanced: one small base mesh per kind, plus a list of
+    /// transforms. Palm, bush and flower counts would otherwise be ~950 copies
+    /// of the same geometry baked into one static mesh, drawn in full in both
+    /// passes from anywhere in the world.
+    enum PropKind {
+        case palm(Int)
+        case bush
+        case flower
+    }
+
+    struct PropInstance {
+        var model: M4
+        var tint: V3
+    }
+
+    /// One instanced draw: a base mesh kind, its transforms, and a box for
+    /// culling. Batches are grouped per island so an off-screen island costs
+    /// nothing.
+    struct PropBatch {
+        var kind: PropKind
+        var instances: [PropInstance]
+        var lo: V3
+        var hi: V3
+    }
+
+    static func buildProps() -> (mesh: MeshBuilder, batches: [PropBatch], obstacles: [Obstacle]) {
         let b = MeshBuilder()
         var obstacles: [Obstacle] = []
+        var batches: [PropBatch] = []
         var rng = RNG(seed: 42)
+
+        /// Wraps instances in batches: one per 40 m block, so a batch is small
+        /// enough that the frustum test actually throws most of them away.
+        /// Keys are world blocks, not island blocks, so a sparse island does not
+        /// pay for the water around it.
+        func batchList(_ kind: PropKind, _ insts: [PropInstance], reach: Float) -> [PropBatch] {
+            let block: Float = 40
+            var buckets: [Int: [PropInstance]] = [:]
+            for inst in insts {
+                let x = inst.model.columns.3.x, z = inst.model.columns.3.z
+                let key = Int((x / block).rounded(.down)) &* 4096
+                    &+ (Int((z / block).rounded(.down)) &+ 2048)
+                buckets[key, default: []].append(inst)
+            }
+            return buckets.keys.sorted().map { key in
+                let group = buckets[key]!
+                var lo = V3(repeating: .greatestFiniteMagnitude)
+                var hi = V3(repeating: -.greatestFiniteMagnitude)
+                for inst in group {
+                    let p = V3(inst.model.columns.3.x, inst.model.columns.3.y, inst.model.columns.3.z)
+                    lo = V3(min(lo.x, p.x - reach), min(lo.y, p.y - reach), min(lo.z, p.z - reach))
+                    hi = V3(max(hi.x, p.x + reach), max(hi.y, p.y + reach), max(hi.z, p.z + reach))
+                }
+                return PropBatch(kind: kind, instances: group, lo: lo, hi: hi)
+            }
+        }
 
         func nearPlaza(_ x: Float, _ z: Float, _ margin: Float) -> Bool {
             length(V2(x, z) - plazaCenter) < plazaRadius + margin
@@ -249,6 +301,7 @@ enum World {
         for island in islands {
             let reach = island.radius * 1.02
             var palms: [V2] = []
+            var palmInst: [[PropInstance]] = [[], [], []]
             var tries = 0
             let wantPalms = island.home ? 80 : Int(island.radius * 0.55)
             while palms.count < wantPalms && tries < 6000 {
@@ -261,11 +314,20 @@ enum World {
                 if palms.contains(where: { length($0 - p) < 5 }) { continue }
                 palms.append(p)
                 let ht = rng.range(5.5, 8.0)
-                b.palm(base: V3(x, h - 0.2, z), height: ht, leanDir: rng.range(0, 6.28), lean: rng.range(0.5, 2.2), seed: rng.range(0, 6.28))
+                let wid = rng.range(0.88, 1.12)
+                let variant = Int(rng.next() * 3) % 3
+                let model = M4.translation(V3(x, h - 0.2, z))
+                    * M4.rotationY(rng.range(0, 6.28))
+                    * M4.scale(V3(wid, ht / 7, wid))
+                palmInst[variant].append(PropInstance(model: model, tint: V3(1, 1, 1)))
                 obstacles.append(Obstacle(center: p, half: V2(0.4, 0.4), round: true, topY: h + ht))
+            }
+            for (v, insts) in palmInst.enumerated() {
+                batches.append(contentsOf: batchList(.palm(v), insts, reach: 9.5))
             }
 
             var bushes = 0
+            var bushInst: [PropInstance] = []
             tries = 0
             let wantBushes = island.home ? 90 : Int(island.radius * 0.6)
             while bushes < wantBushes && tries < 4000 {
@@ -276,11 +338,14 @@ enum World {
                 if h < 2.4 || normal(x, z).y < 0.85 || nearPlaza(x, z, 8) { continue }
                 let r = rng.range(0.7, 1.3)
                 let g = lerp(V3(0.16, 0.55, 0.16), V3(0.3, 0.7, 0.2), rng.next())
-                b.sphere(center: V3(x, h + r * 0.3, z), radii: V3(r, r * 0.8, r), color: g, rings: 6, segs: 10)
+                let model = M4.translation(V3(x, h + r * 0.3, z)) * M4.scale(V3(r, r * 0.8, r))
+                bushInst.append(PropInstance(model: model, tint: g))
                 bushes += 1
             }
+            batches.append(contentsOf: batchList(.bush, bushInst, reach: 2))
 
             var flowers = 0
+            var flowerInst: [PropInstance] = []
             tries = 0
             let wantFlowers = island.home ? 400 : Int(island.radius * 1.6)
             while flowers < wantFlowers && tries < 8000 {
@@ -290,9 +355,11 @@ enum World {
                 let h = height(x, z)
                 if h < 2.3 || normal(x, z).y < 0.9 || nearPlaza(x, z, 3) { continue }
                 let col = petals[Int(rng.next() * 4) % 4]
-                b.sphere(center: V3(x, h + 0.12, z), radii: V3(0.14, 0.1, 0.14), color: col, rings: 4, segs: 6)
+                let model = M4.translation(V3(x, h + 0.12, z)) * M4.scale(V3(0.14, 0.1, 0.14))
+                flowerInst.append(PropInstance(model: model, tint: col))
                 flowers += 1
             }
+            batches.append(contentsOf: batchList(.flower, flowerInst, reach: 0.4))
         }
 
         // Plaza buildings, doors facing the plaza centre.
@@ -368,6 +435,6 @@ enum World {
             b.quad(origin: kpt(ki, a0, ky0), u: ti, v: up, color: kerbCol * 0.88)
         }
 
-        return (b, obstacles)
+        return (b, batches, obstacles)
     }
 }

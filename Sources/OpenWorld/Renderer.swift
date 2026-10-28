@@ -32,6 +32,22 @@ struct GPUMesh {
     }
 }
 
+/// Must match `Inst` in the shader: a transform and a tint, 80 bytes.
+struct GPUInstance {
+    var model: M4
+    var tint: V4
+}
+
+/// A prop batch uploaded and ready to draw: the shared base mesh, the instance
+/// buffer, and the box that decides whether the batch is worth submitting.
+struct InstancedBatch {
+    let mesh: GPUMesh
+    let buffer: MTLBuffer
+    let count: Int
+    let lo: V3
+    let hi: V3
+}
+
 final class Renderer: NSObject, MTKViewDelegate {
     static let sampleCount = 4
     static let colorFormat = MTLPixelFormat.bgra8Unorm
@@ -47,6 +63,8 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private let skyPSO: MTLRenderPipelineState
     private let mainPSO: MTLRenderPipelineState
+    private let mainInstPSO: MTLRenderPipelineState
+    private let shadowInstPSO: MTLRenderPipelineState
     private let waterPSO: MTLRenderPipelineState
     private let particlePSO: MTLRenderPipelineState
     private let shadowMapPSO: MTLRenderPipelineState
@@ -75,10 +93,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Terrain submitted in the last scene pass, for `--stats`.
     private(set) var statsChunks = 0
     private(set) var statsTriangles = 0
+    private(set) var statsPropBatches = 0
+    private(set) var statsPropInstances = 0
+    var propBatchTotal: Int { propBatches.count }
+    var propInstanceTotal: Int { propBatches.reduce(0) { $0 + $1.count } }
     /// Totals across every island, for `--stats`.
     var terrainChunkTotal: Int { terrainChunks.count }
     var terrainTriangleTotal: Int { terrainChunks.reduce(0) { $0 + $1.indexCount / 3 } }
     private let props: GPUMesh
+    private let propBatches: [InstancedBatch]
     private let sphere: GPUMesh
     private let waterGrid: MTLBuffer
     private let waterIndices: MTLBuffer
@@ -192,9 +215,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         skyPSO = pipeline("vs_sky", "fs_sky", vertexDescriptor: nil, blend: false)
         mainPSO = pipeline("vs_main", "fs_main", vertexDescriptor: vd, blend: false)
+        mainInstPSO = pipeline("vs_inst", "fs_main", vertexDescriptor: vd, blend: false)
         waterPSO = pipeline("vs_water", "fs_water", vertexDescriptor: nil, blend: true)
         particlePSO = pipeline("vs_particle", "fs_particle", vertexDescriptor: vd, blend: true)
         shadowMapPSO = shadowPipeline("vs_shadow")
+        shadowInstPSO = shadowPipeline("vs_shadow_inst")
 
         // Bloom / post-process pipelines.
         bloomExtractPSO = postPipeline("vs_post", "fs_bloom_extract")
@@ -222,6 +247,39 @@ final class Renderer: NSObject, MTKViewDelegate {
         terrainChunks = built.chunks
         seaFloor = GPUMesh(device: device, builder: World.buildSeabed())
         self.props = GPUMesh(device: device, builder: props.mesh)
+        // One base mesh per prop kind: three palm shapes (the seed only moves
+        // the fronds about), and a unit sphere that bushes and flowers scale.
+        var palmMeshes: [GPUMesh] = []
+        for seed: Float in [0.7, 2.1, 3.6] {
+            let pb = MeshBuilder()
+            pb.palm(base: .zero, height: 7, leanDir: 0, lean: 1.4, seed: seed)
+            palmMeshes.append(GPUMesh(device: device, builder: pb))
+        }
+        let bushMesh = GPUMesh(device: device, builder: {
+            let mb = MeshBuilder()
+            mb.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 6, segs: 10)
+            return mb
+        }())
+        let flowerMesh = GPUMesh(device: device, builder: {
+            let mb = MeshBuilder()
+            mb.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 4, segs: 6)
+            return mb
+        }())
+        func baseMesh(_ kind: World.PropKind) -> GPUMesh {
+            switch kind {
+            case .palm(let v): return palmMeshes[v % palmMeshes.count]
+            case .bush: return bushMesh
+            case .flower: return flowerMesh
+            }
+        }
+        propBatches = props.batches.map { batch in
+            var gpu = batch.instances.map { GPUInstance(model: $0.model, tint: V4($0.tint, 1)) }
+            let buffer = device.makeBuffer(bytes: &gpu,
+                                           length: MemoryLayout<GPUInstance>.stride * gpu.count,
+                                           options: .storageModeShared)!
+            return InstancedBatch(mesh: baseMesh(batch.kind), buffer: buffer,
+                                  count: gpu.count, lo: batch.lo, hi: batch.hi)
+        }
         let unit = MeshBuilder()
         unit.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 14, segs: 24)
         sphere = GPUMesh(device: device, builder: unit)
@@ -496,6 +554,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         drawMesh(enc, seaFloor, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         drawTerrain(enc, viewProj: vp)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
+        enc.setRenderPipelineState(mainInstPSO)
+        drawProps(enc, viewProj: vp)
+        enc.setRenderPipelineState(mainPSO)
         drawPlayer(enc)
 
         // Water last, blended over everything.
@@ -660,6 +721,9 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         drawTerrain(enc, viewProj: lightVP)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
+        enc.setRenderPipelineState(shadowInstPSO)
+        drawProps(enc, viewProj: lightVP)
+        enc.setRenderPipelineState(shadowMapPSO)
         drawPlayer(enc)
 
         enc.endEncoding()
@@ -684,6 +748,24 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.drawIndexedPrimitives(type: .triangle, indexCount: c.indexCount,
                                       indexType: .uint32, indexBuffer: terrain.indexBuffer,
                                       indexBufferOffset: c.firstIndex * MemoryLayout<UInt32>.stride)
+        }
+    }
+
+    /// Props, one instanced draw per batch. The caller sets the pipeline; the
+    /// batch box is tested against the same frustum as the terrain chunks, so an
+    /// island off screen costs nothing at all.
+    private func drawProps(_ enc: MTLRenderCommandEncoder, viewProj: M4) {
+        let frustum = Frustum(viewProj)
+        statsPropBatches = 0
+        statsPropInstances = 0
+        for batch in propBatches where frustum.contains(batch.lo, batch.hi) {
+            statsPropBatches += 1
+            statsPropInstances += batch.count
+            enc.setVertexBuffer(batch.mesh.vertexBuffer, offset: 0, index: 0)
+            enc.setVertexBuffer(batch.buffer, offset: 0, index: 3)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: batch.mesh.indexCount,
+                                      indexType: .uint32, indexBuffer: batch.mesh.indexBuffer,
+                                      indexBufferOffset: 0, instanceCount: batch.count)
         }
     }
 

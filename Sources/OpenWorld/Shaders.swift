@@ -193,6 +193,26 @@ enum Shaders {
         return r;
     }
 
+    /// Per-instance transform for props. Uniform-ish scale keeps the model
+    /// matrix usable as its own normal matrix, and the fragment normalises.
+    struct Inst {
+        float4x4 model;
+        float4 tint;
+    };
+
+    vertex VOut vs_inst(VIn in [[stage_in]], uint iid [[instance_id]],
+                        constant Frame& f [[buffer(1)]], const device Inst* insts [[buffer(3)]]) {
+        Inst o = insts[iid];
+        float4 wp = o.model * float4(in.pos.xyz, 1.0);
+        VOut r;
+        r.pos = f.viewProj * wp;
+        r.wp = wp.xyz;
+        r.n = normalize((o.model * float4(in.nrm.xyz, 0.0)).xyz);
+        r.col = in.col * o.tint;
+        r.trans = in.nrm.w;
+        return r;
+    }
+
     // Depth-only shadow caster.
     struct ShadowOut {
         float4 pos [[position]];
@@ -202,6 +222,13 @@ enum Shaders {
         float4 wp = o.model * float4(in.pos.xyz, 1.0);
         ShadowOut r;
         r.pos = f.lightViewProj * wp;
+        return r;
+    }
+
+    vertex ShadowOut vs_shadow_inst(VIn in [[stage_in]], uint iid [[instance_id]],
+                                    constant Frame& f [[buffer(1)]], const device Inst* insts [[buffer(3)]]) {
+        ShadowOut r;
+        r.pos = f.lightViewProj * (insts[iid].model * float4(in.pos.xyz, 1.0));
         return r;
     }
 

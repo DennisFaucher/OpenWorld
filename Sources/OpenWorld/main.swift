@@ -157,6 +157,8 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
         let chunks = renderer.statsChunks, tris = renderer.statsTriangles
         print("terrain: \(chunks)/\(renderer.terrainChunkTotal) chunks, "
               + "\(tris)/\(renderer.terrainTriangleTotal) triangles")
+        print("props: \(renderer.statsPropBatches)/\(renderer.propBatchTotal) batches, "
+              + "\(renderer.statsPropInstances)/\(renderer.propInstanceTotal) instances")
     }
     exit(0)
 }
