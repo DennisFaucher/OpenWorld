@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v4.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack) and M4 (world scale) complete apart from three deferred items; M5 (gameplay layer) in progress: crystals, villagers, sound and the shrine goal are in
+## Status: v5.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack), M4 (world scale) and M5 (gameplay layer: crystals, a save file, islanders, synthesised sound and the shrine goal) complete apart from the deferred items in Known issues
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -38,10 +38,12 @@ Fix opportunistically; none block the next milestones.
 11. **The gamepad can't spray.** Right trigger sprints and `A` jumps; the jet is mouse or `F` only.
 12. **Piers and boats have no horizontal collision.** The deck is walkable through `World.pierHeight`, but the pilings are not `Obstacle`s, so you can walk or swim through a post, and a boat can be driven through the jetty and through the other three boats (`resolveObstacles` is skipped while riding). Adding post obstacles and a pier-deck test into `Boat.update`'s bow sample would close both.
 13. **A boat stays wherever it is left.** There is no docking: it does not snap back to its pier, and there is no way to call one from another island, so stranding a boat on a cay is permanent for that session.
-12. **Distant islands cast no shadows**: the shadow box follows the player, so anything outside 90 m of them is unlit by the map.
-13. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v3.0 released).
-14. **Sound has never been judged by ear.** The graph, the levels, the loop seams and the underwater filter are all measured, and `--audio-dump DIR` writes every buffer to disk, but whether the surf reads as surf, whether the chime is charming or shrill, and whether the jet is too loud are open questions. Expect to re-balance the `normalise(...)` targets and the mixer levels on the first listen.
-15. **Synthesising at launch costs about a third of a second** before the window appears (12 s of stereo surf is most of it). Parallelising the buffers across cores, or generating the bed lazily once the window is up, would hide it.
+14. **Distant islands cast no shadows**: the shadow box follows the player, so anything outside 90 m of them is unlit by the map.
+15. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v5.0 released).
+16. **Sound has only been judged by ear once.** The first listen found the surf drowning the footsteps and deep water silent; the bed is now 6 dB quieter, the footsteps louder and swimming has strokes. Everything is still measured rather than heard — whether the strokes read as swimming, whether the deposit bells climb pleasantly, and whether the jet is too loud remain open, and `--audio-dump DIR` writes every buffer to disk for exactly this.
+17. **Synthesising at launch costs about a third of a second** before the window appears (12 s of stereo surf is most of it). Parallelising the buffers across cores, or generating the bed lazily once the window is up, would hide it.
+18. **Nothing reacts to the shrine.** All forty crystals light the tower and speed the pack's refill, and that is the whole of it: the islanders do not gather, no dialogue acknowledges it, and the shrine cannot be un-lit. The payoff is a place to look at, not an event.
+19. **There is nothing to go inside.** The plaza buildings are solid boxes with painted doors; the tower is the only interactive thing in the world.
 
 ## Roadmap
 

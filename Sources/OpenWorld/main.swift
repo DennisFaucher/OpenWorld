@@ -6,7 +6,7 @@ import simd
 let args = CommandLine.arguments
 
 enum Version {
-    static let string = "4.0"
+    static let string = "5.0"
 }
 
 if args.contains("--version") {
