@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v4.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack) and M4 (world scale) complete apart from three deferred items; M5 (gameplay layer) next
+## Status: v4.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack) and M4 (world scale) complete apart from three deferred items; M5 (gameplay layer) in progress: crystals, villagers and sound are in, interactive buildings and the goal loop are not
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -40,6 +40,8 @@ Fix opportunistically; none block the next milestones.
 13. **A boat stays wherever it is left.** There is no docking: it does not snap back to its pier, and there is no way to call one from another island, so stranding a boat on a cay is permanent for that session.
 12. **Distant islands cast no shadows**: the shadow box follows the player, so anything outside 90 m of them is unlit by the map.
 13. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v3.0 released).
+14. **Sound has never been judged by ear.** The graph, the levels, the loop seams and the underwater filter are all measured, and `--audio-dump DIR` writes every buffer to disk, but whether the surf reads as surf, whether the chime is charming or shrill, and whether the jet is too loud are open questions. Expect to re-balance the `normalise(...)` targets and the mixer levels on the first listen.
+15. **Synthesising at launch costs about a third of a second** before the window appears (12 s of stereo surf is most of it). Parallelising the buffers across cores, or generating the bed lazily once the window is up, would hide it.
 
 ## Roadmap
 
@@ -175,7 +177,15 @@ Shipped as v4.0 with three items deliberately deferred: true terrain streaming (
   - [x] Villagers. Six of them, using the player's rig in different clothes (`Look`) and the same stride functions (`PoseClock`), so a villager is 20 spheres and no new pipeline. They walk between waypoints drawn from the terrain within a home radius, refuse a step that would leave the land, turn towards the player inside 4.5 m, stop, and wave for the first couple of seconds. Idle and walk are blended by speed rather than switched at a threshold. Hand-placed homes (plaza, two beaches, the south slope, the east meadow, the big cay), because these are characters with places to be. Drawn in the shadow pass as well as the scene pass.
   - Verified: `--villager-scan` for their starts (all on ground under 31 deg), a 900-frame `--sim` with zero villagers ending below sea level, and renders of one walking, one waving on the plaza, one on the cay. Not verified live: whether the wave reads as friendly rather than odd at play speed.
   - [ ] Interactive buildings (doors that open, a building you can enter)
-- [ ] Audio: ambient waves/birds, footsteps, music hooks via `AVAudioEngine`
+- [x] Sound: ambient surf and wind, birds, footsteps, splash, the jet, the outboard, the pickup chime
+  - Every buffer is synthesised at launch (`Sound.swift`) and played by `AVAudioPlayerNode`s (`Audio.swift`); there are no asset files, and nothing is generated in the render callback. The bed is four looping nodes; the one-shots pool across eight nodes.
+  - Surf is two bands of filtered noise under a swell of two slow LFOs that complete whole cycles in the twelve-second loop, so the loop crossfade (`Sound.seamless`) blends identical modulation. The first version had a swell floor of 0.04, which raised to the 2.4 power silenced the sea for two seconds in every twelve; the floor is now 0.68 and the exponent gentler.
+  - The jet hisses while the stream is live, the outboard goes through a varispeed unit whose rate follows hull speed, footfalls are three variants at random volume, and a pickup rings three bell notes up an A major triad (A5, C#6, E6) built from struck-bar partials rather than harmonics. The surf is loudest at the shoreline and the wind on the ridge, both from `World.height` under the player.
+  - Events are *inferred*: the step counter advancing is a footfall, `found` growing is a pickup, `swimming`/`onGround`/`riding` transitions are the splash, the landing and the engine. Nothing in `Game` changed, so sound failing leaves the game identical.
+  - Underwater is one low-pass across the mix at 420 Hz with +9 dB of make-up gain, crossfaded on the shader's own `uwAmount(camY)` curve, so the ear and the eye agree about where the surface is. Without the gain it measured 13 dB quieter than the beach, which is a mute rather than a muffle.
+  - Verified: `--audio-scan` for levels and loop seams (wrap step below the local p99 for all four loops), `--audio-test` which plays the real graph through a scripted session, records the mix and asserts on it (land RMS 0.084 / brightness 0.49, low-pass 0.065 / 0.01, underwater 0.083 / 0.018, outboard at level, peaks under 0.63), the chime present as a transient in the recording, and the buffers dumped as CAF for listening.
+  - **Not verified: how any of it sounds.** Levels, seams and the filter can be measured; taste cannot. The dumps in `--audio-dump DIR` are the thing to listen to.
+  - No music. A bed of looped pads would fight the ambience and can only be judged by ear, so it is deliberately absent rather than half-done.
 - [ ] Simple quest/goal loop so there is something to *do*
 
 ### M6: Production

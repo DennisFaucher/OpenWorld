@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let view = GameView(frame: NSRect(x: 0, y: 0, width: 1440, height: 900), device: device)
         view.input = renderer.input
         renderer.configure(view)
+        // Silence is an acceptable failure: if the engine cannot start, the game
+        // still runs, it just has no sound.
+        renderer.audio = Audio()
 
         window = NSWindow(contentRect: view.frame,
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -95,7 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationWillTerminate(_ notification: Notification) { saveProgress() }
+    func applicationWillTerminate(_ notification: Notification) {
+        renderer?.audio?.stop()
+        saveProgress()
+    }
 
     /// Written on every pickup and on the way out: the file is a few hundred
     /// bytes, and losing the crystal you just walked a kilometre for is the one
@@ -103,6 +109,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func saveProgress() {
         guard Save.enabled, let renderer else { return }
         Save.write(Save.state(of: renderer.game))
+    }
+
+    // MARK: - menu
+
+    /// Mute lives in the menu rather than on a key: the game has no pause, and a
+    /// stray keystroke during a jump is not how anyone wants to find silence.
+    @objc private func toggleMute(_ item: NSMenuItem) {
+        guard let audio = renderer?.audio else { return }
+        audio.muted.toggle()
+        item.state = audio.muted ? .on : .off
     }
 
     private func buildMenu() {
@@ -118,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         let fs = viewMenu.addItem(withTitle: "Toggle Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fs.keyEquivalentModifierMask = [.command, .control]
+        let mute = viewMenu.addItem(withTitle: "Mute Sound", action: #selector(toggleMute(_:)), keyEquivalent: "m")
+        mute.target = self
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 

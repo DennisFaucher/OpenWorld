@@ -75,6 +75,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     let queue: MTLCommandQueue
     let input = Input()
     let game: Game
+    /// Owned by the live app only: the headless paths never construct it, so a
+    /// screenshot is silent and does not open the audio device.
+    var audio: Audio?
 
     private let skyPSO: MTLRenderPipelineState
     private let mainPSO: MTLRenderPipelineState
@@ -463,6 +466,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let dt = Float(min(now - lastTime, 0.05))
         lastTime = now
         game.update(dt: dt, input: input)
+        audio?.update(game, dt: dt)
 
         // Render shadow map first.
         encodeShadowMap(cb)

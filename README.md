@@ -76,6 +76,8 @@ The game can render a single frame to a PNG without opening a window, which is h
 | `--shard-scan` | Print the generated crystal field: index, position and ground slope |
 | `--villager-scan` | Print where each islander starts, with the slope there |
 | `--villagers` | With `--shot`: print where the islanders are standing when the frame is drawn |
+| `--audio-scan` | Synthesise every sound and print its peak, RMS and loop-point step. `--audio-dump DIR` also writes them as CAF files, so they can be heard outside the game |
+| `--audio-test DIR` | Start the audio engine, play the real graph through a scripted session (pickup, walk, jet, swim, boat), record the mix and assert on it |
 | `--size W H` | Output resolution, default 1920x1080 |
 
 It runs 90 simulation steps first so physics and the camera settle, then renders one 4x-MSAA frame offscreen.
@@ -92,6 +94,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties). Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
 - **Crystals.** Forty gems scattered over the four islands, placed by rejection sampling against the height function — dry land, walkable slope, nine metres apart — so nothing is hand-placed and they follow an island if it moves. Each is an eight-triangle bipyramid that spins and bobs a metre off the ground with a soft halo behind it, because at forty metres an unadorned one reads as another flower. Walking into one bursts it into gold sparks and ticks the counter above the readout.
 - **Islanders.** Six villagers wander the plaza, the beaches and the big cay on waypoints drawn from the terrain, refusing to step into the sea. They turn to face you within a few metres, stop, and wave. They are the player's rig in different clothes with the same stride functions, so the whole cast costs one mesh.
+- **Sound.** Everything you hear is synthesised at launch, because there are no asset files: the sea is two bands of filtered noise under a swell that repeats with the loop, the wind is a band over the ridge, the jet is a pressurised hiss, the outboard is a 42 Hz sawtooth whose pitch follows the hull, footsteps are three variants picked at random, and a crystal rings three bell notes up an A major triad. A bird answers every few seconds and the surf is loudest at the shoreline. Underwater, one low-pass across the mix takes the top off everything — the same crossfade as the shader, so the ear and the eye agree about where the surface is.  View ▸ Mute Sound (`⌘M`) silences it.
 - **Saved progress.** Found crystals, steps and distance go to `~/Library/Application Support/OpenWorld/save.json` on every pickup and on quit. The file is keyed to a hash of the generated field, so a build that moves the crystals drops it rather than marking the wrong ones as taken. Headless renders and `--sim` never read or write it unless `--save PATH` says so.
 - **Boats and piers.** Every island has a plank jetty from the sand out past the drop-off, sited automatically from the coastline, and a boat moored at the end. Stand on the pier, press `E` beside the boat and steer with the same keys you run with: it accelerates to 12 m/s, leans into turns and refuses to run aground, so a cay is ten seconds away instead of a twenty-second swim. `E` again steps you off into the water.
 - **Water clipmap.** Nine rings of 64x64 cells, 1 m at the camera doubling to 256 m, snapped to a single metre-aligned origin so the vertices sit at fixed world positions — the surface does not slide as you walk, which a camera-centred grid always did. 57k triangles instead of 180k.
@@ -132,6 +135,8 @@ All code lives in `Sources/OpenWorld/`:
 | `Boat.swift` | Boat physics (throttle, rudder, shallow-water test) and the hull mesh |
 | `Shards.swift` | The collectibles: their generated placement and the gem mesh |
 | `SaveFile.swift` | Progress on disk: what is saved, the layout hash, and the load/write/clear rules |
+| `Sound.swift` | The synthesis: every buffer generated at launch, the loop crossfade, and the level/click statistics |
+| `Audio.swift` | The engine graph, the mix, and the gameplay events inferred from the game state |
 | `Particles.swift` | CPU particle pool for wakes, splashes, footfall dust, skids and jet spray |
 | `Spray.swift` | The water jet: aim, the solved ballistic arc, wet patches and the goo splats |
 | `World.swift` | Terrain height and normals, terrain mesh, height texture, props, obstacles |
@@ -147,9 +152,9 @@ All code lives in `Sources/OpenWorld/`:
 
 Playable prototype, `v4.0`. Four milestones are complete. **Look and feel:** terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day. **Character and movement:** variable jump height with coyote time and buffering, camera look-ahead and recentring, a measured 45° walkable limit with sliding, a rigged character with six weight-blended states, and ground-contact particles. **Tools and HUD:** the spray pack, goo washing, hover, the tank gauge, the reticle and the activity readout. **World scale:** an archipelago of four islands, chunked and frustum-culled terrain, per-island LOD, instanced vegetation, a water clipmap, and boats and piers.
 
-**Gameplay** has started: forty crystals to find and a save file behind them. Still to come in this milestone: NPCs, audio, and a goal loop.
+**Gameplay** has started: forty crystals to find, a save file behind them, six islanders, and a synthesised soundtrack of surf, wind, footsteps, the jet and the outboard. Still to come in this milestone: interactive buildings and a goal loop.
 
-The repository is not a complete game — there is progress but no goal, and no audio. Distant islands cast no shadow (that needs cascades), the goo never respawns, and a boat stays wherever it is left.
+The repository is not a complete game — there is progress but no goal. Distant islands cast no shadow (that needs cascades), the goo never respawns, and a boat stays wherever it is left.
 
 ## Notes
 

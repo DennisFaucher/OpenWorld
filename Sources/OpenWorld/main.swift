@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Metal
 import simd
 
@@ -83,6 +84,174 @@ if args.contains("--shard-scan") {
     }
     exit(0)
 }
+
+/// `--audio-scan` synthesises every buffer and prints its level and the step at
+/// the loop point — a click is a discontinuity, so it can be measured. Nothing
+/// here opens the audio device, so the scan works on a machine with no sound.
+///
+/// `--audio-dump DIR` also writes the buffers as CAF files, which is how the mix
+/// can be heard outside the game.
+if args.contains("--audio-scan") || args.contains("--audio-dump") {
+    var dump: String? = nil
+    if let i = args.firstIndex(of: "--audio-dump"), i + 1 < args.count,
+       !args[i + 1].hasPrefix("--") {
+        dump = args[i + 1]
+    }
+    if let dir = dump {
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    }
+    for (name, buf, loop) in Sound.all() {
+        let s = Sound.stats(buf, loop: loop)
+        let label = name.padding(toLength: 6, withPad: " ", startingAt: 0)
+        let seam = loop ? String(format: "  seam %.2f", s.seam) : ""
+        print(String(format: "%@ %5.2fs  peak %.3f  rms %.3f%@",
+                     label, Double(buf.frameLength) / Sound.rate, s.peak, s.rms, seam))
+        if let dir = dump {
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).caf")
+            Sound.write(buf, to: url)
+        }
+    }
+    if let dir = dump { print("wrote \(dir)") }
+    exit(0)
+}
+
+/// `--audio-test DIR` starts the engine, plays the real graph while a synthetic
+/// session runs, and records the mix. A buffer scan cannot tell a connected
+/// graph from a silent one; this can, and it also measures the high band with the
+/// camera above and below the surface, which is the only numeric evidence that
+/// the underwater low-pass is doing anything.
+if args.contains("--audio-test") {
+    var dir = "/Users/faucherd/Downloads/tmp/openworld-audio"
+    if let i = args.firstIndex(of: "--audio-test"), i + 1 < args.count,
+       !args[i + 1].hasPrefix("--") {
+        dir = args[i + 1]
+    }
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+    guard let audio = Audio() else {
+        print("audio: engine failed to start (is there an output device?)")
+        exit(1)
+    }
+    let game = Game(obstacles: World.buildProps().obstacles)
+    let input = Input()
+    input.keys.insert(Key.w)
+    let dt: Float = 1 / 60
+    var clock: Float = 0
+    func run(_ seconds: Float) {
+        let stop = clock + seconds
+        while clock < stop {
+            game.update(dt: dt, input: input)
+            audio.update(game, dt: dt)
+            Thread.sleep(forTimeInterval: Double(dt))
+            clock += dt
+        }
+    }
+
+    // Prime the inference before anything is captured: the first frame is a
+    // snapshot by design, so an event that happens on it is swallowed.
+    run(0.5)
+
+    let landURL = URL(fileURLWithPath: dir).appendingPathComponent("mix-land.caf")
+    guard audio.startCapture(to: landURL) else {
+        print("audio: could not install a tap on the mixer")
+        exit(1)
+    }
+    // A pickup is the one event the inference cannot fake: the chime has to come
+    // from `found` growing. Stepping onto a crystal makes it happen on the next
+    // frame, without walking there.
+    if let s = game.shards.first {
+        let x = s.pos.x + 0.5
+        game.pos = V3(x, World.height(x, s.pos.z), s.pos.z)
+    }
+    run(1.6)
+    input.spray = true
+    run(1.4)
+    input.spray = false
+    let land = audio.stopCapture()
+    print("land     " + audio.debugLine + "  found \(game.found.count)")
+
+    // The same scene with the low-pass pinned on: the only difference between this
+    // and the capture above is the filter, so the drop in level and brightness is
+    // the filter and not a different soundscape.
+    audio.muffleOverride = 1
+    run(1.0)
+    let filterURL = URL(fileURLWithPath: dir).appendingPathComponent("mix-filter.caf")
+    guard audio.startCapture(to: filterURL) else {
+        print("audio: could not re-install the tap")
+        exit(1)
+    }
+    run(2.0)
+    let filtered = audio.stopCapture()
+    print("filtered " + audio.debugLine)
+    audio.muffleOverride = nil
+
+    // The muffle only engages with the *camera* below the surface, and on land
+    // the boom is clamped above the waterline, so this has to happen while
+    // swimming.
+    game.pos = V3(62, Game.swimY, 62)
+    game.camPitch = -0.30
+    game.camDist = 5
+    input.keys.remove(Key.w)
+    run(1.5)
+    let waterURL = URL(fileURLWithPath: dir).appendingPathComponent("mix-water.caf")
+    guard audio.startCapture(to: waterURL) else {
+        print("audio: could not re-install the tap")
+        exit(1)
+    }
+    run(2.5)
+    let water = audio.stopCapture()
+    print("water    " + audio.debugLine)
+
+    // The outboard is the only sound routed through a varispeed unit, so it is the
+    // one a bad graph connection would silence without anything else noticing.
+    game.boardBoat(0)
+    input.keys.insert(Key.w)
+    run(1.0)
+    let boatURL = URL(fileURLWithPath: dir).appendingPathComponent("mix-boat.caf")
+    guard audio.startCapture(to: boatURL) else {
+        print("audio: could not re-install the tap")
+        exit(1)
+    }
+    run(2.0)
+    let boat = audio.stopCapture()
+    print("boat     " + audio.debugLine + String(format: "  speed %.1f", game.boats[0].speed))
+    audio.stop()
+
+    func line(_ name: String, _ s: (peak: Float, rms: Float, bright: Float)) -> String {
+        String(format: "%-8@ peak %.3f  rms %.3f  brightness %.4f",
+               name as NSString, s.peak, s.rms, s.bright)
+    }
+    print(line("land", land))
+    print(line("filtered", filtered))
+    print(line("water", water))
+    print(line("boat", boat))
+    print(String(format: "camera %.2f  swimming %@", game.camPos.y,
+                 game.swimming ? "yes" : "no"))
+
+    if land.peak <= 0.01 || land.rms <= 0.002 {
+        print("FAIL: the mix is silent")
+        exit(1)
+    }
+    if max(land.peak, max(water.peak, boat.peak)) > 0.995 {
+        print("FAIL: the mix clips")
+        exit(1)
+    }
+    if filtered.bright >= land.bright * 0.9 {
+        print("FAIL: the low-pass is not filtering")
+        exit(1)
+    }
+    if water.bright >= land.bright * 0.9 {
+        print("FAIL: the underwater low-pass is not engaging")
+        exit(1)
+    }
+    if audio.levels.motor <= 0.2 {
+        print("FAIL: the outboard is not playing")
+        exit(1)
+    }
+    print("ok: \(dir)")
+    exit(0)
+}
+
 
 /// `--sim N [--walk] [--jump F D]` steps the simulation and prints the player
 /// state each frame. Jump timing is the one part of movement feel that a
