@@ -89,7 +89,7 @@ It runs 90 simulation steps first so physics and the camera settle, then renders
 - **Hover and washing.** Aim the jet at your feet and the thrust lifts you, at a steady climb that lasts as long as the tank does (the tank on the character's back shrinks as it empties). Twelve splats of goo are stuck to the plaza and the paths; a jet on one wears it away and tints the splash.
 - **Boats and piers.** Every island has a plank jetty from the sand out past the drop-off, sited automatically from the coastline, and a boat moored at the end. Stand on the pier, press `E` beside the boat and steer with the same keys you run with: it accelerates to 12 m/s, leans into turns and refuses to run aground, so a cay is ten seconds away instead of a twenty-second swim. `E` again steps you off into the water.
 - **Water clipmap.** Nine rings of 64x64 cells, 1 m at the camera doubling to 256 m, snapped to a single metre-aligned origin so the vertices sit at fixed world positions — the surface does not slide as you walk, which a camera-centred grid always did. 57k triangles instead of 180k.
-- **Water.** A camera-centred radial grid with summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, refracted shoreline, and animated foam along the shore. Swimming and wading leave foam and spray behind.
+- **Water surface.** Summed travelling waves, depth-based shallow/deep colour read from a height texture, Fresnel sky reflection, sun glitter, a refracted shoreline and animated foam that follows the real coastline. Swimming and wading leave foam and spray behind.
 - **Ground contact.** Every footfall kicks up dust tinted by the ground it came off — sand, dry grass or rock — plus a wider cloud on landing, a skid trail while sliding, and a scuff when you push into a face too steep to climb.
 - **Underwater.** Absorption fog, caustics on submerged surfaces, and the surface seen from below with the Snell window and total internal reflection.
 - **Sky and time of day.** One cloud layer at a fixed altitude, drawn both by the sky (where the view ray meets it) and by shading (projected along the sun), so drifting cloud shadows cross the island under the clouds that cast them. `--hour` swings the sun across the sky, warming and dimming as it drops.
@@ -123,6 +123,7 @@ All code lives in `Sources/OpenWorld/`:
 | `main.swift` | Entry point; `--shot` headless mode, otherwise starts `NSApplication` |
 | `AppDelegate.swift` | Window, menu, and the `MTKView` that turns key/mouse events into input state |
 | `Game.swift` | Player physics, swimming, obstacle push-out, orbit camera with collision, gamepad |
+| `Boat.swift` | Boat physics (throttle, rudder, shallow-water test) and the hull mesh |
 | `Particles.swift` | CPU particle pool for wakes, splashes, footfall dust, skids and jet spray |
 | `Spray.swift` | The water jet: aim, the solved ballistic arc, wet patches and the goo splats |
 | `World.swift` | Terrain height and normals, terrain mesh, height texture, props, obstacles |
@@ -136,9 +137,11 @@ All code lives in `Sources/OpenWorld/`:
 
 ## Status
 
-Playable prototype, `v2.0`. Two milestones are complete. **Look and feel:** terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day. **Character and movement:** variable jump height with coyote time and buffering, camera look-ahead and recentring, a measured 45° walkable limit with sliding, a rigged character with six weight-blended states, and ground-contact particles. Next is the water-jet mechanic, then world content.
+Playable prototype, `v4.0`. Four milestones are complete. **Look and feel:** terrain detail, water, shadows, bloom, the underwater view, drifting cloud shadows, time of day. **Character and movement:** variable jump height with coyote time and buffering, camera look-ahead and recentring, a measured 45° walkable limit with sliding, a rigged character with six weight-blended states, and ground-contact particles. **Tools and HUD:** the spray pack, goo washing, hover, the tank gauge, the reticle and the activity readout. **World scale:** an archipelago of four islands, chunked and frustum-culled terrain, per-island LOD, instanced vegetation, a water clipmap, and boats and piers.
 
-The repository is not a complete game — there is no goal, no saving, and no audio.
+Next is the gameplay layer: collectibles and save state, NPCs, audio, and a goal loop so there is something to do.
+
+The repository is not a complete game — there is no goal, no saving, and no audio. Distant islands cast no shadow (that needs cascades), the goo never respawns, and a boat stays wherever it is left.
 
 ## Notes
 

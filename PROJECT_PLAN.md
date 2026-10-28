@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v3.0 released — M1 (look and feel), M2 (character and movement) and M3 (spray pack) complete; M4 next
+## Status: v4.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack) and M4 (world scale) complete apart from three deferred items; M5 (gameplay layer) next
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -126,6 +126,8 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
   - Ground only. Splats are lobed quads drawn in the particle buffer (`kind` 5), shrinking as their health drops; the splash is tinted green while a splat is being washed. Walls would need a second quad orientation and are left for later. A splat counts as hit within `radius + 0.35` m, because by the time the jet lands the water has already spread over the rim.
 
 ### M4: World scale and streaming
+
+Shipped as v4.0 with three items deliberately deferred: true terrain streaming (the heightmap is still one mesh built at launch, just chunked and culled), shadow cascades, and bridges. All three are recorded in Known issues.
 - [x] Chunked terrain with frustum culling
   - The 240-unit grid is cut into 15x15 chunks of 16 m, each a contiguous index range into the one shared vertex buffer, with a box taken from the heights it owns. `Frustum` extracts six clip planes from the frame's view-projection and a chunk is skipped when its box is outside any of them. Measured with the new `--stats` flag: 55 of 225 chunks (28k of 115k triangles) from the plaza spawn, 205 from the 110 m overview, where the whole island really is in view.
   - The shadow pass uses the same routine against the light's orthographic projection. It culls almost nothing today because the shadow frustum is a fixed +-160 box around the island; tying it to the island's bounds (or to the camera) is the next easy win.
