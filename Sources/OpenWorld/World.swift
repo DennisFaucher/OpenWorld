@@ -28,29 +28,70 @@ private func fbm(_ x: Float, _ y: Float) -> Float {
     return sum / 0.9375
 }
 
+/// One island of the archipelago. The home island is the original one: same
+/// centre, same radius, so the plaza, the mountain and every existing landmark
+/// stay exactly where they were.
+struct Island {
+    var centre: V2
+    /// Nominal land radius. The coastline wobbles roughly +-22 m around it.
+    var radius: Float = 72
+    /// Height of the summit cone on top of the rolling ground.
+    var peak: Float = 20
+    var seed: Float = 0
+    /// Terrain cell size: the home island is walked on, the others are seen
+    /// from 100 m away, so they can be sampled half as finely.
+    var cell: Float = 1
+    var home: Bool = false
+}
+
 enum World {
-    /// Half-size of the terrain mesh and height texture, in world units.
-    static let extent: Float = 120
+    /// Half-size of the world, in world units. Covers every island and a little
+    /// open water around them.
+    static let extent: Float = 340
     static let waterLevel: Float = 0
     static let seabed: Float = -4
     static let plazaCenter = V2(-18, 22)
     static let plazaRadius: Float = 13
     static let plazaHeight: Float = 3.2
-    /// Players can't wander farther than this from the origin.
-    static let boundsRadius: Float = 104
+    /// Players can't swim farther than this from the origin.
+    static let boundsRadius: Float = 320
 
-    static func height(_ x: Float, _ z: Float) -> Float {
-        let p = V2(x, z)
-        let warp = (fbm(x * 0.022 + 11.3, z * 0.022 + 4.7) - 0.5) * 44
-        let t = 72 - (length(p) + warp)
+    static let islands: [Island] = [
+        Island(centre: V2(0, 0), radius: 72, peak: 20, seed: 0, cell: 1, home: true),
+        Island(centre: V2(-200, 130), radius: 46, peak: 10, seed: 31),
+        Island(centre: V2(180, 214), radius: 54, peak: 15, seed: 57),
+        Island(centre: V2(96, -204), radius: 38, peak: 7, seed: 83),
+    ]
+
+    /// The height of one island at a point, ignoring the others. A point far
+    /// enough outside the coastline is always seabed, which is what lets the
+    /// caller skip the expensive noise for every island it is nowhere near.
+    private static func islandHeight(_ i: Island, _ x: Float, _ z: Float) -> Float {
+        let p = V2(x, z) - i.centre
+        let d = length(p)
+        // The warp can move the coastline by +-22 m and the summit mask reaches
+        // 14 m past it; nothing beyond that can be above the water.
+        if d > i.radius + 40 { return seabed }
+        let warp = (fbm(x * 0.022 + 11.3 + i.seed, z * 0.022 + 4.7 + i.seed * 1.7) - 0.5) * 44
+        let t = i.radius - (d + warp)
         let land = sstep(-6, 12, t)
         var h = seabed + land * 5.8
-        h += sstep(12, 50, t) * (3 + fbm(x * 0.05, z * 0.05 + 9) * 9)
-        let mp = p - V2(34, -28)
-        h += 20 * exp(-dot(mp, mp) / (2 * 15 * 15)) * sstep(0, 14, t)
-        let pw = 1 - sstep(plazaRadius, plazaRadius + 12, length(p - plazaCenter))
-        h = lerp(h, plazaHeight, pw)
+        h += sstep(12, 50, t) * (3 + fbm(x * 0.05 + i.seed, z * 0.05 + 9 + i.seed) * 9)
+        let mp = p - (i.home ? V2(34, -28) : V2(-i.radius * 0.35, i.radius * 0.3))
+        h += i.peak * exp(-dot(mp, mp) / (2 * 15 * 15)) * sstep(0, 14, t)
+        if i.home {
+            let pw = 1 - sstep(plazaRadius, plazaRadius + 12, length(p - plazaCenter))
+            h = lerp(h, plazaHeight, pw)
+        }
         return max(h, seabed)
+    }
+
+    static func height(_ x: Float, _ z: Float) -> Float {
+        var h = seabed
+        for i in islands {
+            h = max(h, islandHeight(i, x, z))
+        }
+        return h
     }
 
     static func normal(_ x: Float, _ z: Float) -> V3 {
@@ -84,67 +125,113 @@ enum World {
     /// Chunks are cut on a fixed grid so a chunk's indices stay contiguous and
     /// a whole chunk can be skipped with one draw-range check.
     static let chunkSize: Float = 16
-    static let chunksPerSide = Int(extent * 2 / chunkSize)
 
     static func buildTerrain() -> (mesh: MeshBuilder, chunks: [TerrainChunk]) {
         let b = MeshBuilder()
-        let cells = Int(extent * 2)
+        var chunks: [TerrainChunk] = []
+        for island in islands {
+            addPatch(island.centre, radius: island.radius, cell: island.cell, to: b, chunks: &chunks)
+        }
+        return (b, chunks)
+    }
+
+    /// Ground colour from height and slope. Shared by the island patches so the
+    /// beaches and the grass line agree across the archipelago.
+    private static func ground(_ x: Float, _ z: Float, _ h: Float, _ n: V3) -> V3 {
         let sand = V3(0.97, 0.87, 0.56)
         let grassA = V3(0.36, 0.78, 0.2)
         let grassB = V3(0.62, 0.86, 0.26)
         let rock = V3(0.60, 0.60, 0.58)
+        // Wobble the sand/grass threshold so the beach meets the hill along a
+        // ragged line rather than a wide band of half-and-half mud.
+        let wob = (fbm(x * 0.07, z * 0.07 + 3) - 0.5) * 0.9
+        var c = lerp(grassA, grassB, fbm(x * 0.07, z * 0.07 + 3))
+        c = lerp(sand, c, sstep(1.10, 1.95, h + wob))
+        return lerp(c, rock, sstep(0.74, 0.52, n.y))
+    }
+
+    /// One square of terrain around an island. It has to clear the wobbliest
+    /// coastline and end on a chunk boundary, so every chunk is a whole square
+    /// and patches never leave a gap.
+    private static func addPatch(_ centre: V2, radius: Float, cell: Float,
+                                 to b: MeshBuilder, chunks: inout [TerrainChunk]) {
+        let half = (ceil((radius + 26) / chunkSize)) * chunkSize
+        let cells = Int(half * 2 / cell)
+        let stride = cells + 1
+        let base = b.vertices.count
+        let x0 = centre.x - half, z0 = centre.y - half
         for j in 0...cells {
-            let z = -extent + Float(j)
+            let z = z0 + Float(j) * cell
             for i in 0...cells {
-                let x = -extent + Float(i)
+                let x = x0 + Float(i) * cell
                 let h = height(x, z)
-                let n = normal(x, z)
-                // Wobble the sand/grass threshold so the beach meets the hill along
-                // a ragged line rather than a wide band of half-and-half mud.
-                let wob = (fbm(x * 0.07, z * 0.07 + 3) - 0.5) * 0.9
-                var c = lerp(grassA, grassB, fbm(x * 0.07, z * 0.07 + 3))
-                c = lerp(sand, c, sstep(1.10, 1.95, h + wob))
-                c = lerp(c, rock, sstep(0.74, 0.52, n.y))
-                // Alpha 0.5 flags terrain so the fragment shader adds ground detail.
-                b.add(V3(x, h, z), n, c, alpha: 0.5)
+                // Alpha 0.5 flags terrain for the fragment shader's detail.
+                b.add(V3(x, h, z), normal(x, z), ground(x, z, h, normal(x, z)), alpha: 0.5)
             }
         }
-        let stride = UInt32(cells + 1)
-        let cs = Int(chunkSize)
-        var chunks: [TerrainChunk] = []
-        chunks.reserveCapacity(chunksPerSide * chunksPerSide)
-        for cj in 0..<chunksPerSide {
-            for ci in 0..<chunksPerSide {
+        let per = max(1, Int(chunkSize / cell))
+        for cj in 0..<(cells / per) {
+            for ci in 0..<(cells / per) {
                 let first = b.indices.count
-                let i0 = ci * cs, j0 = cj * cs
-                for j in j0..<(j0 + cs) {
-                    for i in i0..<(i0 + cs) {
-                        let a = UInt32(j) * stride + UInt32(i)
-                        let bb = a + 1, c = a + stride, d = c + 1
+                for j in (cj * per)..<((cj + 1) * per) {
+                    for i in (ci * per)..<((ci + 1) * per) {
+                        let a = UInt32(base + j * stride + i)
+                        let bb = a + 1, c = a + UInt32(stride), d = c + 1
                         b.tri(a, c, bb)
                         b.tri(bb, c, d)
                     }
                 }
-                // The chunk's vertical extent comes from the vertices it owns,
-                // so the culling box follows the terrain instead of the grid.
                 var loY = Float.greatestFiniteMagnitude
                 var hiY = -Float.greatestFiniteMagnitude
-                for j in j0...(j0 + cs) {
-                    for i in i0...(i0 + cs) {
-                        let y = b.vertices[j * Int(stride) + i].pos.y
+                for j in (cj * per)...((cj + 1) * per) {
+                    for i in (ci * per)...((ci + 1) * per) {
+                        let y = b.vertices[base + j * stride + i].pos.y
                         loY = min(loY, y)
                         hiY = max(hiY, y)
                     }
                 }
-                let x0 = -extent + Float(i0)
-                let z0 = -extent + Float(j0)
+                let cx = x0 + Float(ci) * chunkSize
+                let cz = z0 + Float(cj) * chunkSize
                 chunks.append(TerrainChunk(firstIndex: first,
                                            indexCount: b.indices.count - first,
-                                           lo: V3(x0, loY, z0),
-                                           hi: V3(x0 + chunkSize, hiY, z0 + chunkSize)))
+                                           lo: V3(cx, loY, cz),
+                                           hi: V3(cx + chunkSize, hiY, cz + chunkSize)))
             }
         }
-        return (b, chunks)
+    }
+
+    /// The open sea floor: one flat sheet at seabed height with the island
+    /// patches cut out of it, so nothing is coplanar under a patch.
+    static func buildSeabed() -> MeshBuilder {
+        let b = MeshBuilder()
+        let step: Float = 8
+        let n = Int(extent * 2 / step)
+        let sand = V3(0.94, 0.84, 0.54)
+        let patches = islands.map { (centre: $0.centre,
+                                     half: (ceil(($0.radius + 26) / chunkSize)) * chunkSize) }
+        var index = [Int](repeating: -1, count: (n + 1) * (n + 1))
+        func vert(_ i: Int, _ j: Int) -> UInt32 {
+            let k = j * (n + 1) + i
+            if index[k] < 0 {
+                let x = -extent + Float(i) * step
+                let z = -extent + Float(j) * step
+                index[k] = Int(b.add(V3(x, seabed, z), V3(0, 1, 0), sand, alpha: 0.5))
+            }
+            return UInt32(index[k])
+        }
+        for j in 0..<n {
+            for i in 0..<n {
+                let cx = -extent + (Float(i) + 0.5) * step
+                let cz = -extent + (Float(j) + 0.5) * step
+                if patches.contains(where: { abs(cx - $0.centre.x) <= $0.half && abs(cz - $0.centre.y) <= $0.half }) {
+                    continue
+                }
+                let a = vert(i, j), bb = vert(i + 1, j), c = vert(i, j + 1), d = vert(i + 1, j + 1)
+                b.tri(a, c, bb)
+                b.tri(bb, c, d)
+            }
+        }
+        return b
     }
 
     static func buildProps() -> (mesh: MeshBuilder, obstacles: [Obstacle]) {
@@ -156,46 +243,56 @@ enum World {
             length(V2(x, z) - plazaCenter) < plazaRadius + margin
         }
 
-        // Palms along the beaches and low ground.
-        var palms: [V2] = []
-        var tries = 0
-        while palms.count < 80 && tries < 6000 {
-            tries += 1
-            let x = rng.range(-100, 100), z = rng.range(-100, 100)
-            let h = height(x, z)
-            if h < 0.9 || h > 3.0 || normal(x, z).y < 0.9 || nearPlaza(x, z, 10) { continue }
-            let p = V2(x, z)
-            if palms.contains(where: { length($0 - p) < 5 }) { continue }
-            palms.append(p)
-            let ht = rng.range(5.5, 8.0)
-            b.palm(base: V3(x, h - 0.2, z), height: ht, leanDir: rng.range(0, 6.28), lean: rng.range(0.5, 2.2), seed: rng.range(0, 6.28))
-            obstacles.append(Obstacle(center: p, half: V2(0.4, 0.4), round: true, topY: h + ht))
-        }
-
-        // Bushes and flowers on grass.
-        var bushes = 0
-        tries = 0
-        while bushes < 90 && tries < 4000 {
-            tries += 1
-            let x = rng.range(-100, 100), z = rng.range(-100, 100)
-            let h = height(x, z)
-            if h < 2.4 || normal(x, z).y < 0.85 || nearPlaza(x, z, 8) { continue }
-            let r = rng.range(0.7, 1.3)
-            let g = lerp(V3(0.16, 0.55, 0.16), V3(0.3, 0.7, 0.2), rng.next())
-            b.sphere(center: V3(x, h + r * 0.3, z), radii: V3(r, r * 0.8, r), color: g, rings: 6, segs: 10)
-            bushes += 1
-        }
+        // Palms along the beaches and low ground, on every island. Counts scale
+        // with the island's size so a small cay is not a forest.
         let petals: [V3] = [V3(1, 0.85, 0.15), V3(1, 0.45, 0.7), V3(1, 1, 1), V3(0.95, 0.25, 0.2)]
-        var flowers = 0
-        tries = 0
-        while flowers < 400 && tries < 8000 {
-            tries += 1
-            let x = rng.range(-100, 100), z = rng.range(-100, 100)
-            let h = height(x, z)
-            if h < 2.3 || normal(x, z).y < 0.9 || nearPlaza(x, z, 3) { continue }
-            let col = petals[Int(rng.next() * 4) % 4]
-            b.sphere(center: V3(x, h + 0.12, z), radii: V3(0.14, 0.1, 0.14), color: col, rings: 4, segs: 6)
-            flowers += 1
+        for island in islands {
+            let reach = island.radius * 1.02
+            var palms: [V2] = []
+            var tries = 0
+            let wantPalms = island.home ? 80 : Int(island.radius * 0.55)
+            while palms.count < wantPalms && tries < 6000 {
+                tries += 1
+                let x = island.centre.x + rng.range(-reach, reach)
+                let z = island.centre.y + rng.range(-reach, reach)
+                let h = height(x, z)
+                if h < 0.9 || h > 3.0 || normal(x, z).y < 0.9 || nearPlaza(x, z, 10) { continue }
+                let p = V2(x, z)
+                if palms.contains(where: { length($0 - p) < 5 }) { continue }
+                palms.append(p)
+                let ht = rng.range(5.5, 8.0)
+                b.palm(base: V3(x, h - 0.2, z), height: ht, leanDir: rng.range(0, 6.28), lean: rng.range(0.5, 2.2), seed: rng.range(0, 6.28))
+                obstacles.append(Obstacle(center: p, half: V2(0.4, 0.4), round: true, topY: h + ht))
+            }
+
+            var bushes = 0
+            tries = 0
+            let wantBushes = island.home ? 90 : Int(island.radius * 0.6)
+            while bushes < wantBushes && tries < 4000 {
+                tries += 1
+                let x = island.centre.x + rng.range(-reach, reach)
+                let z = island.centre.y + rng.range(-reach, reach)
+                let h = height(x, z)
+                if h < 2.4 || normal(x, z).y < 0.85 || nearPlaza(x, z, 8) { continue }
+                let r = rng.range(0.7, 1.3)
+                let g = lerp(V3(0.16, 0.55, 0.16), V3(0.3, 0.7, 0.2), rng.next())
+                b.sphere(center: V3(x, h + r * 0.3, z), radii: V3(r, r * 0.8, r), color: g, rings: 6, segs: 10)
+                bushes += 1
+            }
+
+            var flowers = 0
+            tries = 0
+            let wantFlowers = island.home ? 400 : Int(island.radius * 1.6)
+            while flowers < wantFlowers && tries < 8000 {
+                tries += 1
+                let x = island.centre.x + rng.range(-reach, reach)
+                let z = island.centre.y + rng.range(-reach, reach)
+                let h = height(x, z)
+                if h < 2.3 || normal(x, z).y < 0.9 || nearPlaza(x, z, 3) { continue }
+                let col = petals[Int(rng.next() * 4) % 4]
+                b.sphere(center: V3(x, h + 0.12, z), radii: V3(0.14, 0.1, 0.14), color: col, rings: 4, segs: 6)
+                flowers += 1
+            }
         }
 
         // Plaza buildings, doors facing the plaza centre.

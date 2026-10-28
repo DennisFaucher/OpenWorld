@@ -70,10 +70,14 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var blurTextures: [MTLTexture] = []
 
     private let terrain: GPUMesh
+    private let seaFloor: GPUMesh
     private let terrainChunks: [World.TerrainChunk]
     /// Terrain submitted in the last scene pass, for `--stats`.
     private(set) var statsChunks = 0
     private(set) var statsTriangles = 0
+    /// Totals across every island, for `--stats`.
+    var terrainChunkTotal: Int { terrainChunks.count }
+    var terrainTriangleTotal: Int { terrainChunks.reduce(0) { $0 + $1.indexCount / 3 } }
     private let props: GPUMesh
     private let sphere: GPUMesh
     private let waterGrid: MTLBuffer
@@ -216,6 +220,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let built = World.buildTerrain()
         terrain = GPUMesh(device: device, builder: built.mesh)
         terrainChunks = built.chunks
+        seaFloor = GPUMesh(device: device, builder: World.buildSeabed())
         self.props = GPUMesh(device: device, builder: props.mesh)
         let unit = MeshBuilder()
         unit.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 14, segs: 24)
@@ -464,10 +469,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         let viewM = M4.lookAt(eye: game.camPos, center: game.camTarget, up: V3(0, 1, 0))
         let vp = proj * viewM
 
-        // Light view-projection for shadow mapping (orthographic covering the island).
-        let lightView = M4.lookAt(eye: sunDir * 300, center: V3(0, 0, 0), up: V3(0, 1, 0))
-        let lightProj = M4.orthographic(left: -160, right: 160, bottom: -160, top: 160, near: 10, far: 500)
-        let lightVP = lightProj * lightView
+        // Light view-projection for shadow mapping (orthographic, following the
+        // player: one 4096 map cannot cover 600 m of archipelago at this detail).
+        let lightVP = lightViewProj()
 
         var frame = FrameUniforms(
             viewProj: vp,
@@ -489,6 +493,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Opaque geometry.
         enc.setRenderPipelineState(mainPSO)
         enc.setDepthStencilState(opaqueDepth)
+        drawMesh(enc, seaFloor, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         drawTerrain(enc, viewProj: vp)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         drawPlayer(enc)
@@ -611,6 +616,24 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
     }
 
+    /// Shadow box, `+-90 m` around the player. The centre is snapped to whole
+    /// shadow texels along the light's own axes, so the box moves in steps and
+    /// the shadows do not crawl across the ground as the player walks.
+    private func lightViewProj() -> M4 {
+        let r: Float = 90
+        let proj = M4.orthographic(left: -r, right: r, bottom: -r, top: r, near: 10, far: 620)
+        // A rotation-only light space, so a texel is a fixed size in world units.
+        let base = M4.lookAt(eye: sunDir * 300, center: V3(0, 0, 0), up: V3(0, 1, 0))
+        let texel = 2 * r / Float(Renderer.shadowMapSize)
+        let ls = base * V4(game.pos, 1)
+        let snapped = V4((ls.x / texel).rounded() * texel,
+                         (ls.y / texel).rounded() * texel,
+                         ls.z, 1)
+        let centre = V3((base.inverse * snapped).x, (base.inverse * snapped).y, (base.inverse * snapped).z)
+        let view = M4.lookAt(eye: centre + sunDir * 300, center: centre, up: V3(0, 1, 0))
+        return proj * view
+    }
+
     private func encodeShadowMap(_ cb: MTLCommandBuffer) {
         let rpd = MTLRenderPassDescriptor()
         rpd.depthAttachment.texture = shadowMap
@@ -623,12 +646,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setDepthStencilState(shadowDepth)
         enc.setCullMode(.none)
 
-        // Light view-projection for shadow mapping.
-        let lightView = M4.lookAt(eye: sunDir * 300, center: V3(0, 0, 0), up: V3(0, 1, 0))
-        let lightProj = M4.orthographic(left: -160, right: 160, bottom: -160, top: 160, near: 10, far: 500)
-        let lightVP = lightProj * lightView
-
         // We only need the lightVP for the shadow vertex shader.
+        let lightVP = lightViewProj()
         var frame = FrameUniforms(
             viewProj: lightVP,
             invViewProj: lightVP.inverse,

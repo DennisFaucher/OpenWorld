@@ -120,7 +120,10 @@ enum Shaders {
 
     float3 applyFog(float3 c, float3 wp, float3 cam, float3 sunDir) {
         float d = distance(wp, cam);
-        float f = 1.0 - exp(-d * 0.0035);
+        // Gentler than it was: the island used to be the whole world, so haze
+        // at 200 m was the horizon. An archipelago has to stay readable across
+        // 400 m or the far islands are just pale smudges.
+        float f = 1.0 - exp(-d * 0.0022);
         float3 lit = mix(c, horizonColor(sunDir), f);
         float uw = uwAmount(cam.y);
         if (uw > 0.0) {

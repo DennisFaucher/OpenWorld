@@ -155,8 +155,8 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))
     if args.contains("--stats") {
         let chunks = renderer.statsChunks, tris = renderer.statsTriangles
-        print("terrain: \(chunks)/\(World.chunksPerSide * World.chunksPerSide) chunks, "
-              + "\(tris) triangles of \(World.chunksPerSide * World.chunksPerSide) x 512")
+        print("terrain: \(chunks)/\(renderer.terrainChunkTotal) chunks, "
+              + "\(tris)/\(renderer.terrainTriangleTotal) triangles")
     }
     exit(0)
 }

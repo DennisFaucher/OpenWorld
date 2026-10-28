@@ -36,7 +36,8 @@ Fix opportunistically; none block the next milestones.
 9. **Shadow map is re-rendered every frame** at 4096² (terrain + props + player, ~550k triangles). Only the player actually changes, so caching the static casters would be an easy win if frame time becomes an issue.
 10. **Washed goo never comes back.** Twelve splats is the whole game: once they are gone there is nothing left to aim at, and `R` respawns the player, not the world. A respawn timer (or a refill on respawn) closes the loop.
 11. **The gamepad can't spray.** Right trigger sprints and `A` jumps; the jet is mouse or `F` only.
-12. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v3.0 released).
+12. **Distant islands cast no shadows**: the shadow box follows the player, so anything outside 90 m of them is unlit by the map.
+13. No tests. The repo is public at https://github.com/DennisFaucher/OpenWorld (v3.0 released).
 
 ## Roadmap
 
@@ -122,10 +123,17 @@ Ordered roughly by value-to-effort. Each item should end with updated `shots/` r
 - [x] Chunked terrain with frustum culling
   - The 240-unit grid is cut into 15x15 chunks of 16 m, each a contiguous index range into the one shared vertex buffer, with a box taken from the heights it owns. `Frustum` extracts six clip planes from the frame's view-projection and a chunk is skipped when its box is outside any of them. Measured with the new `--stats` flag: 55 of 225 chunks (28k of 115k triangles) from the plaza spawn, 205 from the 110 m overview, where the whole island really is in view.
   - The shadow pass uses the same routine against the light's orthographic projection. It culls almost nothing today because the shadow frustum is a fixed +-160 box around the island; tying it to the island's bounds (or to the camera) is the next easy win.
-- [ ] Archipelago: several islands instead of one, with the height function and prop placement per island
+- [x] Archipelago: several islands instead of one, with the height function and prop placement per island
+  - `World.islands` is four entries: the home island keeps its centre and radius, so the plaza, the mountain and every landmark are untouched; three cays at (-200, 130), (180, 214) and (96, -204) use the same profile with their own radius, summit and noise seed. `height` is a max over them, and each island returns the sea floor immediately when the sample is more than `radius + 40` away, which is what keeps the build cheap: the whole world builds in about half a second, including props.
+  - Each island is its own square patch at 1 m, sized to clear the wobbliest coastline (radius + 26) and rounded up to a whole number of chunks. Patches never overlap — the nearest pair still leaves an 8 m gap — so the flat outer ring of each patch meets the sea-floor sheet exactly at the sea floor height with no z-fighting, because the sheet has the patch rectangles cut out of it.
+  - Palms, bushes and flowers are placed per island, counts scaled by radius. The buildings and the bell tower stay on the home island.
+  - The shadow box now follows the player (90 m ortho, snapped to whole shadow texels along the light's axes) instead of covering a fixed +-160 m around the origin. A 4096 map across 680 m would be 5 texels per metre; this keeps the old density wherever the player is standing. Distant islands therefore cast no shadows — cascades are the fix, and are not done.
+  - Distance fog was halved (`0.0035` to `0.0022`) because at the old density the far islands were pale smudges at 300 m. The home island's horizon is a little crisper as a result.
+  - Swimming across open water was checked with `--sim`: steady 3.9 m/s, no falling through the sea floor, bounds at 320 m.
 - [ ] LOD: coarser index ranges for distant chunks, so a chunk is 512 triangles near and fewer far
 - [ ] Heightmap from tiles/noise per chunk instead of one global mesh; stream by player position
 - [ ] Instanced rendering for palms/bushes/flowers (currently one merged static mesh)
+- [ ] Shadow cascades, so a distant island casts the shadows it should
 - [ ] Bigger water extent with a stable clip-map grid
 - [ ] Boats/piers/bridges connecting islands; fast-travel or loading-free transitions
 
