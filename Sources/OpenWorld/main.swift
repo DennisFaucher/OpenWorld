@@ -220,6 +220,26 @@ if args.contains("--audio-test") {
     run(2.0)
     let boat = audio.stopCapture()
     print("boat     " + audio.debugLine + String(format: "  speed %.1f", game.boats[0].speed))
+    // Read now: leaving the boat later in the session fades the motor out, and
+    // the assertion has to be about the capture that had it running.
+    let motorLevel = audio.levels.motor
+
+    // The shrine. Forty crystals arriving is forty deposits, so the bells are the
+    // one thing here that could quietly not fire: the chimes are a pool of three
+    // nodes shared with the pickups, and the delivery has no sound of its own
+    // unless `banked` is compared.
+    game.riding = nil
+    game.primeFound(game.shards.count)
+    game.pos = V3(World.towerCenter.x + 3, World.towerBaseY, World.towerCenter.y)
+    run(0.4)
+    let shrineURL = URL(fileURLWithPath: dir).appendingPathComponent("mix-shrine.caf")
+    guard audio.startCapture(to: shrineURL) else {
+        print("audio: could not re-install the tap")
+        exit(1)
+    }
+    run(4.2)
+    let shrine = audio.stopCapture()
+    print("shrine   " + audio.debugLine + "  delivered \(game.banked)")
     audio.stop()
 
     func line(_ name: String, _ s: (peak: Float, rms: Float, bright: Float)) -> String {
@@ -230,6 +250,7 @@ if args.contains("--audio-test") {
     print(line("filtered", filtered))
     print(line("water", water))
     print(line("boat", boat))
+    print(line("shrine", shrine))
     print(String(format: "camera %.2f  swimming %@", game.camPos.y,
                  game.swimming ? "yes" : "no"))
 
@@ -249,12 +270,20 @@ if args.contains("--audio-test") {
         print("FAIL: the underwater low-pass is not engaging")
         exit(1)
     }
-    if audio.levels.motor <= 0.2 {
+    if motorLevel <= 0.2 {
         print("FAIL: the outboard is not playing")
         exit(1)
     }
     if audio.strokesPlayed <= 0 {
         print("FAIL: no swimming strokes (the water is silent while moving)")
+        exit(1)
+    }
+    if game.banked != game.shards.count {
+        print("FAIL: the shrine did not take all forty (\(game.banked))")
+        exit(1)
+    }
+    if shrine.peak <= 0.02 {
+        print("FAIL: the shrine bells are silent")
         exit(1)
     }
     print("ok: \(dir)")
@@ -270,10 +299,12 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     let input = Input()
     let game = Game(obstacles: World.buildProps().obstacles,
                     save: Save.enabled ? Save.load() : nil)
-    if Save.enabled { game.onShard = { [unowned game] _ in Save.write(Save.state(of: game)) } }
+    if Save.enabled { game.onProgress = { [unowned game] in Save.write(Save.state(of: game)) } }
     if let p = argValues("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
     }
+    if let n = argValues("--shrine", 1)?.first { game.primeFound(Int(n)) }
+    if let n = argValues("--delivered", 1)?.first { game.primeDelivered(Int(n)) }
     if let v = argValues("--yaw", 1) { game.camYaw = v[0] }
     if let v = argValues("--pitch", 1) { game.camPitch = v[0] }
     if let v = argValues("--dist", 1) { game.camDist = v[0] }
@@ -305,6 +336,7 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
     }
     print("frame       x       y       z      vy  ground swim   fov  slope |   hipL   hipR  kneeL  spd")
     var picked = game.found.count
+    var offered = game.banked
     for f in 0..<frames {
         for s in jumpSpecs where s.at == f {
             input.jumpQueued = true
@@ -323,10 +355,17 @@ if let i = args.firstIndex(of: "--sim"), i + 1 < args.count {
             picked = game.found.count
             print("      ** shard taken: \(picked)/\(game.shards.count)")
         }
+        if game.banked != offered {
+            offered = game.banked
+            if game.banked % 4 == 0 || game.shrineLit {
+                print("      ** lamp lit: \(game.banked)/\(game.shards.count)"
+                      + (game.shrineLit ? "  SHRINE COMPLETE" : ""))
+            }
+        }
     }
     let wet = game.villagers.filter { World.height($0.pos.x, $0.pos.z) < 0.5 }.count
-    print("shards \(game.found.count)/\(game.shards.count), steps \(game.steps), "
-          + "villagers \(game.villagers.count) (wet \(wet))")
+    print("shards \(game.found.count)/\(game.shards.count) delivered \(game.banked), "
+          + "steps \(game.steps), villagers \(game.villagers.count) (wet \(wet))")
     exit(0)
 }
 
@@ -338,6 +377,8 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     let renderer = Renderer(device: device, hour: values("--hour", 1)?.first ?? 12,
                             save: Save.enabled ? Save.load() : nil)
     let game = renderer.game
+    if let n = values("--shrine", 1)?.first { game.primeFound(Int(n)) }
+    if let n = values("--delivered", 1)?.first { game.primeDelivered(Int(n)) }
     if let p = values("--pos", 2), p.count == 2 {
         game.pos = V3(p[0], max(World.height(p[0], p[1]), World.pierHeight(p[0], p[1])), p[1])
     }

@@ -512,7 +512,11 @@ enum Shaders {
         float d = length(in.uv);
         if (d > 1.0) { discard_fragment(); }
         float a = in.col.a * smoothstep(1.0, 0.45, d);
-        if (in.kind > 6.5) {
+        if (in.kind > 8.5) {
+            // The crown beam: a soft-edged column whose vertical fade rides in
+            // the vertex alpha, so the sides only have to be tapered here.
+            a = in.col.a * smoothstep(1.0, 0.0, abs(in.uv.x));
+        } else if (in.kind > 6.5) {
             // Crystal halo: a soft radial falloff and nothing else, tighter than
             // the default so it glows around the gem rather than fogging the
             // ground behind it.
@@ -801,20 +805,24 @@ enum Shaders {
             c = mix(c, float3(0.98, 0.99, 1.0), value);
         }
 
-        // Crystal counter, in its own pill above the readout. It is the only
-        // progress the game keeps, so it stays on screen rather than living in a
-        // menu; the diamond is the icon, so no word has to fit in the font.
+        // Crystal counter, in its own pill above the readout. It quotes the
+        // field — how many you have picked up — because that is what you are
+        // doing moment to moment; the tower's lamps are the count of what has
+        // been delivered. The pill warms up while there is something in the pack.
         {
+            bool carrying = hud.shardTail.z > 0.5;
             float2 pc = float2(116.0 * sc, 130.0 * sc);
             float2 ph = float2(61.0 * sc, 17.0 * sc);
             float sd = roundBox(p, pc, ph, 8.0 * sc);
-            c = mix(c, float3(0.04, 0.07, 0.11), (1.0 - smoothstep(-sc, sc, sd)) * 0.42);
+            float3 pill = carrying ? float3(0.20, 0.13, 0.05) : float3(0.04, 0.07, 0.11);
+            c = mix(c, pill, (1.0 - smoothstep(-sc, sc, sd)) * 0.52);
 
             float2 q = abs(p - float2(69.0 * sc, 130.0 * sc));
             float dia = 1.0 - smoothstep(-sc, sc, (q.x + q.y) - 7.0 * sc);
             // Lit from above, so it reads as a facet rather than a flat lozenge.
             float shine = smoothstep(-7.0 * sc, 7.0 * sc, p.y - 130.0 * sc);
             float3 gem = mix(float3(1.0, 0.66, 0.18), float3(1.0, 0.90, 0.55), shine);
+            if (carrying) { gem = min(gem * 1.35, float3(1.0)); }
             c = mix(c, gem, dia);
 
             float cs = max(2.0, round(2.6 * sc));

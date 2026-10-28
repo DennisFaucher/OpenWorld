@@ -6,7 +6,7 @@ A native macOS (Apple Silicon, Metal) third-person open-world game you can walk 
 
 Tech stack: Swift 6 toolchain (language mode 5), Metal (runtime-compiled MSL), MetalKit, GameController, SwiftPM. See `AGENTS.md` for architecture and workflow.
 
-## Status: v4.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack) and M4 (world scale) complete apart from three deferred items; M5 (gameplay layer) in progress: crystals, villagers and sound are in, interactive buildings and the goal loop are not
+## Status: v4.0 released — M1 (look and feel), M2 (character and movement), M3 (spray pack) and M4 (world scale) complete apart from three deferred items; M5 (gameplay layer) in progress: crystals, villagers, sound and the shrine goal are in
 
 Done and verified via headless renders (live input only smoke-tested):
 
@@ -189,7 +189,9 @@ Shipped as v4.0 with three items deliberately deferred: true terrain streaming (
   - Verified: `--audio-scan` for levels and loop seams (wrap step below the local p99 for all four loops), `--audio-test` which plays the real graph through a scripted session, records the mix and asserts on it (land RMS 0.084 / brightness 0.49, low-pass 0.065 / 0.01, underwater 0.083 / 0.018, outboard at level, peaks under 0.63), the chime present as a transient in the recording, and the buffers dumped as CAF for listening.
   - **Not verified: how any of it sounds.** Levels, seams and the filter can be measured; taste cannot. The dumps in `--audio-dump DIR` are the thing to listen to.
   - No music. A bed of looped pads would fight the ambience and can only be judged by ear, so it is deliberately absent rather than half-done.
-- [ ] Simple quest/goal loop so there is something to *do*
+- [x] Simple quest/goal loop so there is something to *do*
+  - The bell tower on the plaza is the shrine. Walking up to it with crystals offers them, one every 0.085 s with no keypress: the walk is the gesture. Ten lamps spiral up the shaft, four crystals each, drawn as glowing billboards above the bloom threshold so they read from the far side of the plaza; all forty light a column of light off the spire, which is the only thing in the world visible from another island. The reward is a pack that refills nearly three times as fast. The delivered count is saved (optionally, so pre-shrine files still load) and the HUD pill keeps quoting the field, because a counter that sits at 0 while you carry a handful reads as broken. Verified headlessly: `--sim 400 --shrine 40 --pos -8 16` lights all ten lamps and reports SHRINE COMPLETE; nothing is delivered standing at spawn; a save round-trips `banked`; `--audio-test` captures the bells and asserts all forty arrive.
+  - Not done: nothing reacts to it beyond the tower and the refill rate. The islanders do not gather, and the shrine cannot be un-lit.
 
 ### M6: Production
 - [ ] Precompile shaders into a `.metallib` (move MSL out of the Swift string into `.metal` files; needs an Xcode project or a build plugin)

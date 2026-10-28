@@ -67,9 +67,17 @@ final class Game {
     /// Indices into `shards` already picked up. Set once by the save file and
     /// then only grown, so the count is the whole of the game's progress.
     private(set) var found: Set<Int> = []
-    /// Called when a crystal is taken, so the app layer can write the save
-    /// without `Game` ever touching the disk (the headless paths leave it nil).
-    var onShard: ((Int) -> Void)?
+    /// Crystals offered at the tower. `found` is the field, this is the shrine;
+    /// the difference is what you are carrying, and it is what the lamps count.
+    private(set) var banked: Int = 0
+    /// Deposits still rolling in, so the lamps light one after another instead
+    /// of all at once. `banked + pending` is what has left your hands.
+    private var pending = 0
+    private var depositClock: Float = 0
+    /// Called whenever the progress the save file holds changes — a crystal
+    /// taken or one offered — so the app layer can write it without `Game` ever
+    /// touching the disk (the headless paths leave it nil).
+    var onProgress: (() -> Void)?
     /// One boat per pier, moored at the seaward end. Index into `boats` while
     /// riding; nil on foot.
     var boats: [Boat] = []
@@ -90,6 +98,10 @@ final class Game {
     /// it; `tankDry` keeps it off until there is enough for another burst.
     var tank: Float = 1
     var tankDry = false
+    /// Crystals in the pack that have not been offered yet.
+    var carried: Int { max(0, found.count - banked - pending) }
+    /// Every crystal delivered: the lamps are all lit and the crown burns.
+    var shrineLit: Bool { !shards.isEmpty && banked >= shards.count }
     /// Blend weights per `Player.State` (same order: idle first), eased so a
     /// state change does not pop.
     var poseWeights: [Float] = [1, 0, 0, 0, 0, 0]
@@ -147,9 +159,28 @@ final class Game {
         // world that no longer exists, so it is dropped rather than remapped.
         if let save, save.layout == Save.layoutHash(shards) {
             found = Set(save.found.filter { shards.indices.contains($0) })
+            // A file that claims more delivered than found is nonsense; clamp it
+            // rather than letting the lamps disagree with the counter.
+            banked = min(max(0, save.banked ?? 0), found.count)
             steps = max(0, save.steps)
             distance = max(0, save.metres)
         }
+    }
+
+    /// Headless only: hand the player the first `n` crystals as already found and
+    /// nothing delivered, so the shrine can be checked without walking the
+    /// archipelago. Headless runs never save, so this cannot leak into a file.
+    func primeFound(_ n: Int) {
+        found = Set(shards.indices.prefix(max(0, n)))
+        banked = 0
+        pending = 0
+    }
+
+    /// As above, but with the first `n` already offered, so the lamps and the
+    /// crown beam can be rendered without crossing the plaza.
+    func primeDelivered(_ n: Int) {
+        primeFound(n)
+        banked = min(max(0, n), found.count)
     }
 
     func respawn() {
@@ -262,7 +293,10 @@ final class Game {
         } else {
             // Only the player's own body in the water refills the pack: sitting
             // in a boat a hand's width above the surface is not a dip.
-            if (swimming || pos.y < 0.45) && riding == nil { tank = min(1, tank + dt * 0.85) }
+            // A lit shrine feeds the pack: the same water, but it comes back
+            // nearly three times as fast, which is the reward worth having.
+            let fill: Float = shrineLit ? 2.2 : 0.85
+            if (swimming || pos.y < 0.45) && riding == nil { tank = min(1, tank + dt * fill) }
             if tankDry && tank > 0.25 { tankDry = false }
         }
         let jetHit = tankDry ? nil : Spray.impact(origin: aimOrigin, dir: aimDir, obstacles: obstacles)
@@ -464,7 +498,42 @@ final class Game {
         if let i = shards.indices.first(where: { !found.contains($0) && inReach(shards[$0]) }) {
             found.insert(i)
             particles.shimmer(at: shards[i].gem(time: time))
-            onShard?(i)
+            onProgress?()
+        }
+
+        // The offering. No key: walking up to the tower with crystals in hand is
+        // the whole gesture, and a prompt would turn the one deliberate act in
+        // the game into a chore. They go in one at a time so the lamps light in a
+        // run, and the count lands on the last one a couple of seconds later.
+        if riding == nil, carried > 0, abs(pos.y - World.towerBaseY) < 4,
+           length(V2(pos.x, pos.z) - World.towerCenter) < World.shrineRadius {
+            pending += carried
+        }
+        if pending > 0 {
+            var bankedNow = false
+            depositClock -= dt
+            while pending > 0 && depositClock <= 0 {
+                pending -= 1
+                banked += 1
+                bankedNow = true
+                depositClock += 0.085
+                // Every fourth crystal is a lamp; the light itself is drawn from
+                // `banked`, so this is only the sparkle at the socket it just lit.
+                if banked % 4 == 0 {
+                    let lamp = World.towerLamps[min(World.towerLamps.count - 1, banked / 4 - 1)]
+                    particles.shimmer(at: lamp, tint: V3(1.5, 1.2, 0.55))
+                }
+                if shrineLit {
+                    particles.shimmer(at: V3(World.towerCenter.x,
+                                             World.towerSpireY + 0.6, World.towerCenter.y),
+                                      tint: V3(1.6, 1.3, 0.6))
+                }
+            }
+            // One write per delivery, not one per crystal: the queue is a
+            // couple of seconds of roll-up and forty JSON encodes in a row is
+            // not free. Anything still pending is still carried, so a quit in
+            // the middle of it loses nothing but the walk back.
+            if bankedNow && pending == 0 { onProgress?() }
         }
 
 

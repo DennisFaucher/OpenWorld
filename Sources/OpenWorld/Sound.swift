@@ -335,14 +335,18 @@ enum Sound {
     /// A pickup: three bell notes up the A major triad, each four partials with
     /// its own decay. The partial ratios are a struck bar's, not a harmonic
     /// series, which is what makes it read as a chime rather than a tone.
-    static func chime() -> AVAudioPCMBuffer {
+    /// A three-note bell. `transpose` is a semitone offset: the shrine lights its
+    /// lamps up a fifth and then an octave, and repeating the same pitch ten times
+    /// would read as an alarm rather than as progress.
+    static func chime(transpose: Float = 0) -> AVAudioPCMBuffer {
         let b = buffer(1.9)
         let ch = b.floatChannelData!
         let fs = Float(rate)
+        let k = powf(2, transpose / 12)
         let notes: [(f: Float, at: Float, gain: Float, pan: Float)] = [
-            (880.0, 0.00, 1.00, -0.25),
-            (1108.73, 0.085, 0.85, 0.05),
-            (1318.51, 0.17, 0.70, 0.3),
+            (880.0 * k, 0.00, 1.00, -0.25),
+            (1108.73 * k, 0.085, 0.85, 0.05),
+            (1318.51 * k, 0.17, 0.70, 0.3),
         ]
         let partials: [(ratio: Float, gain: Float, decay: Float)] = [
             (1.0, 1.00, 1.30), (2.0, 0.42, 0.75), (2.76, 0.26, 0.45), (5.4, 0.12, 0.26),

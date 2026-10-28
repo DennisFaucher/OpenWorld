@@ -55,6 +55,26 @@ enum World {
     static let plazaCenter = V2(-18, 22)
     static let plazaRadius: Float = 13
     static let plazaHeight: Float = 3.2
+    /// The bell tower is the shrine the crystals are offered to: its lamps count
+    /// what has been delivered, and the last one lights the crown.
+    static let towerCenter = plazaCenter + V2(7, -6)
+    static let towerBaseY = plazaHeight
+    static let towerTopY = plazaHeight + 12
+    /// Tip of the spire: the cone above the shaft is five metres.
+    static let towerSpireY = towerTopY + 5
+    /// Ten lamps spiralling up the shaft, each worth a quarter of the field's
+    /// fortieth part. A spiral rather than one column per face: from any side of
+    /// the plaza four or five are in view, so the count always reads.
+    static let towerLamps: [V3] = (0..<10).map { i in
+        let a = 2.2 + Float(i) * 0.72
+        let up = 2.6 + Float(i) * 0.85
+        let r = 2.40 - (up + 1) * (0.4 / 13)     // the shaft tapers 2.3 -> 1.9
+        return V3(towerCenter.x + cos(a) * r, towerBaseY + up, towerCenter.y + sin(a) * r)
+    }
+    /// Close enough that the offering happens without a key: walking to the
+    /// shrine is the intent, so pressing something to confirm it is only a step.
+    static let shrineRadius: Float = 4.6
+
     /// Players can't swim farther than this from the origin. Derived from the
     /// islands, never chosen: a hard-coded 320 was five metres inside the
     /// north-east island's beach, which walled off three of its crystals with
@@ -514,7 +534,7 @@ enum World {
         }
 
         // Bell tower on the plaza.
-        let tc = plazaCenter + V2(7, -6)
+        let tc = towerCenter
         let tb = V3(tc.x, plazaHeight, tc.y)
         b.frustum(base: tb - V3(0, 1, 0), r0: 2.3, r1: 1.9, height: 13, sides: 20, color: V3(1, 0.95, 0.82))
         b.frustum(base: tb + V3(0, 10.5, 0), r0: 2.3, r1: 2.3, height: 1.4, sides: 20, color: V3(0.9, 0.5, 0.25))

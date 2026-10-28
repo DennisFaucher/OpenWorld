@@ -19,14 +19,14 @@ final class Audio {
     private let jetPlayer = AVAudioPlayerNode()
     private let motorPlayer = AVAudioPlayerNode()
     private let splashPlayer = AVAudioPlayerNode()
-    private let chimePlayer = AVAudioPlayerNode()
+    private let chimePlayers: [AVAudioPlayerNode]
     private let thudPlayer = AVAudioPlayerNode()
     private let stepPlayers: [AVAudioPlayerNode]
     private let birdPlayers: [AVAudioPlayerNode]
     private let strokePlayers: [AVAudioPlayerNode]
 
     private let splashBuffer: AVAudioPCMBuffer
-    private let chimeBuffer: AVAudioPCMBuffer
+    private let chimeBuffers: [AVAudioPCMBuffer]
     private let thudBuffer: AVAudioPCMBuffer
     private let stepBuffers: [AVAudioPCMBuffer]
     private let birdBuffers: [AVAudioPCMBuffer]
@@ -44,6 +44,8 @@ final class Audio {
     private var lastSteps = 0
     private var lastStride = 0
     private var lastFound = 0
+    private var lastBanked = 0
+    private var chimeCursor = 0
     private var wasSwimming = false
     private var wasGrounded = true
     private var lastFallSpeed: Float = 0
@@ -97,8 +99,9 @@ final class Audio {
         birdBuffers = (0..<2).map { Sound.bird(variant: $0) }
         strokeBuffers = (0..<2).map { Sound.stroke(variant: $0) }
         splashBuffer = Sound.splash()
-        chimeBuffer = Sound.chime()
+        chimeBuffers = [0, 5, 12].map { Sound.chime(transpose: $0) }
         thudBuffer = Sound.thud()
+        chimePlayers = (0..<3).map { _ in AVAudioPlayerNode() }
         stepPlayers = (0..<3).map { _ in AVAudioPlayerNode() }
         birdPlayers = (0..<2).map { _ in AVAudioPlayerNode() }
         strokePlayers = (0..<2).map { _ in AVAudioPlayerNode() }
@@ -106,8 +109,8 @@ final class Audio {
         let fmt = Sound.format
         engine.attach(bus)
         let throughBus: [AVAudioNode] = [surfPlayer, windPlayer, jetPlayer,
-                                         splashPlayer, chimePlayer, thudPlayer]
-            + stepPlayers + birdPlayers + strokePlayers
+                                         splashPlayer, thudPlayer]
+            + chimePlayers + stepPlayers + birdPlayers + strokePlayers
         for node in throughBus + [motorPlayer, motorPitch, muffle] {
             engine.attach(node)
         }
@@ -164,6 +167,7 @@ final class Audio {
             lastSteps = g.steps
             lastStride = Int(g.walkPhase / Float.pi)
             lastFound = g.found.count
+            lastBanked = g.banked
             wasSwimming = g.swimming
             wasGrounded = g.onGround
             lastFallSpeed = g.vel.y
@@ -199,8 +203,28 @@ final class Audio {
         lastStride = stride
 
         if g.found.count > lastFound {
-            play(chimePlayer, chimeBuffer, volume: 0.7)
+            play(chimePlayers[chimeCursor % chimePlayers.count],
+                 chimeBuffers[0], volume: 0.65)
+            chimeCursor += 1
             lastFound = g.found.count
+        }
+
+        // Offering at the shrine. A bell per lamp lit, climbing a fifth and then
+        // an octave as the count goes up, and a chord when the last one lands —
+        // otherwise forty crystals arriving is a long run of the same note.
+        if g.banked != lastBanked {
+            if g.banked / 4 != lastBanked / 4 {
+                let k = max(0, g.banked / 4 - 1) % 3
+                play(chimePlayers[chimeCursor % chimePlayers.count],
+                     chimeBuffers[k], volume: 0.45)
+                chimeCursor += 1
+            }
+            if g.shrineLit && lastBanked < g.shards.count {
+                play(chimePlayers[0], chimeBuffers[2], volume: 0.6)
+                play(chimePlayers[1], chimeBuffers[0], volume: 0.5)
+                play(thudPlayer, thudBuffer, volume: 0.5)
+            }
+            lastBanked = g.banked
         }
 
         if g.swimming && !wasSwimming {

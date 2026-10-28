@@ -664,7 +664,8 @@ final class Renderer: NSObject, MTKViewDelegate {
                    game.aimImpact != nil ? game.sprayBlend : 0, Float(game.boardingHint))
         enc.setFragmentBytes(&g, length: MemoryLayout<V4>.stride, index: 0)
         var h = HUDText(steps: game.steps, metres: game.distance, calories: game.calories,
-                        found: game.found.count, total: game.shards.count)
+                        found: game.found.count, carrying: game.carried > 0,
+                        total: game.shards.count)
         enc.setFragmentBytes(&h, length: MemoryLayout<HUDText>.stride, index: 1)
     }
 
@@ -675,14 +676,17 @@ final class Renderer: NSObject, MTKViewDelegate {
         var steps = SIMD4<Int32>(repeating: 0)
         var miles = SIMD4<Int32>(repeating: 0)
         var calories = SIMD4<Int32>(repeating: 0)
-        /// The first four characters of "found/total".
+        /// The first four characters of "found/total". What the shrine has been
+        /// given is not a number on the HUD: the tower's lamps are the readout,
+        /// which is the point of walking over there.
         var shards = SIMD4<Int32>(repeating: 0)
-        /// The fifth character, and 1 in `.y` once every crystal has been taken.
-        /// A font row is four cells, so five characters do not fit one register —
-        /// the shader draws the last one as a second row of one.
+        /// The fifth character, then 1 in `.y` once the shrine is full and 1 in
+        /// `.z` while there are crystals in hand. A font row is four cells, so
+        /// five characters do not fit one register — the shader draws the last
+        /// one as a second row of one.
         var shardTail = SIMD4<Int32>(repeating: 0)
 
-        init(steps: Int, metres: Float, calories: Int, found: Int, total: Int) {
+        init(steps: Int, metres: Float, calories: Int, found: Int, carrying: Bool, total: Int) {
             // Four cells is all the font is given; a very long session clips the
             // top digit rather than running into the next column.
             let hundredths = min(999, Int(metres / 1609.344 * 100))
@@ -693,7 +697,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             while count.count > 5 { count.removeFirst() }
             while count.count < 5 { count.insert(0, at: 0) }
             self.shards = SIMD4<Int32>(count[0], count[1], count[2], count[3])
-            self.shardTail = SIMD4<Int32>(count[4], found >= total ? 1 : 0, 0, 0)
+            self.shardTail = SIMD4<Int32>(count[4], found >= total && total > 0 ? 1 : 0,
+                                          carrying ? 1 : 0, 0)
         }
 
         /// Right-aligns in `width` cells, blanks on the left, so the number grows
@@ -716,12 +721,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         let glows = game.shards.indices.filter {
             !game.found.contains($0) && length(game.shards[$0].pos - game.camPos) < 170
         }
-        guard !parts.isEmpty || !decals.isEmpty || !goos.isEmpty || !glows.isEmpty,
-              game.camPos.y > 0 else { return }
+        // The lamps are always drawn, lit or not, so that the empty sockets show
+        // how much of the shrine is still dark. That makes this pass run in every
+        // frame above water, which is a handful of quads.
+        guard game.camPos.y > 0 else { return }
         let right = normalize(V3(view.columns.0.x, view.columns.1.x, view.columns.2.x))
         let up = normalize(V3(view.columns.0.y, view.columns.1.y, view.columns.2.y))
 
-        let need = (parts.count + decals.count + goos.count + glows.count) * 6
+        let need = (parts.count + decals.count + goos.count + glows.count
+                    + World.towerLamps.count + 2) * 6   // +2: the beam's two quads
         if particleVerts.count < need {
             particleVerts = [Vertex](repeating: Vertex(pos: .zero, nrm: .zero, col: .zero),
                                      count: max(need, 6144))
@@ -806,6 +814,48 @@ final class Renderer: NSObject, MTKViewDelegate {
                 let off = right * (uv.x * r) + up * (uv.y * r)
                 particleVerts[n] = Vertex(pos: V4(c + off, 1), nrm: V4(uv.x, uv.y, 7, 0), col: col)
                 n += 1
+            }
+        }
+
+        // The shrine: a lamp at every socket it has lit, and a beam off the spire
+        // once the field is complete. Same pass as the halos — soft, camera-facing,
+        // no depth write — because that is what a light that is not geometry is.
+        let litLamps = game.shrineLit ? World.towerLamps.count : game.banked / 4
+        for (i, lamp) in World.towerLamps.enumerated() {
+            let on = i < litLamps
+            let pulse = 0.80 + 0.20 * sin(game.time * 2.3 + Float(i) * 0.9)
+            // Bright enough that the red channel clears 1.0 once the alpha is
+            // applied, which is what makes the bloom pick a lamp up: at forty
+            // metres a lamp is six pixels and a flat six-pixel dot is a speck.
+            let col = on ? V4(V3(2.30, 1.85, 0.85), 0.55 * pulse)
+                         : V4(V3(0.26, 0.22, 0.15), 0.34)
+            let r: Float = on ? 0.62 : 0.15
+            for uv in quad {
+                let off = right * (uv.x * r) + up * (uv.y * r)
+                particleVerts[n] = Vertex(pos: V4(lamp + off, 1), nrm: V4(uv.x, uv.y, 7, 0), col: col)
+                n += 1
+            }
+        }
+        if game.shrineLit {
+            // A column of light off the spire, pointed straight up rather than at
+            // the camera: it is the one thing in the world tall enough to find
+            // from another island. The vertical fade is in the vertex alpha, so
+            // the shader only has to taper the sides.
+            // Two quads, not one: a narrow core inside a wide soft halo. A single
+            // quad wide enough to look soft has hard sides, and a narrow one
+            // reads as a paper streamer hung off the spire.
+            let base = V3(World.towerCenter.x, World.towerSpireY - 0.9, World.towerCenter.y)
+            let h: Float = 70
+            for (w, bright, peak) in [(Float(1.7), Float(2.5), Float(0.30)),
+                                      (Float(5.2), Float(1.9), Float(0.10))] {
+                for uv in quad {
+                    let y = (uv.y + 1) * 0.5
+                    let a = peak * (1 - y) * (1 - y)
+                    particleVerts[n] = Vertex(pos: V4(base + right * (uv.x * w) + V3(0, y * h, 0), 1),
+                                              nrm: V4(uv.x, uv.y, 9, 0),
+                                              col: V4(V3(bright, bright * 0.78, bright * 0.40), a))
+                    n += 1
+                }
             }
         }
 

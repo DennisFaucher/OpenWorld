@@ -10,6 +10,9 @@ struct SaveState: Codable {
     var version = SaveState.currentVersion
     var layout: Int
     var found: [Int]
+    /// Crystals offered at the tower. Optional so a file written before the
+    /// shrine existed still loads: those crystals are simply still in hand.
+    var banked: Int?
     var steps: Int
     var metres: Float
 }
@@ -32,7 +35,7 @@ enum Save {
     /// Everything a save file needs, taken from a live game.
     static func state(of game: Game) -> SaveState {
         SaveState(layout: layoutHash(game.shards), found: game.found.sorted(),
-                  steps: game.steps, metres: game.distance)
+                  banked: game.banked, steps: game.steps, metres: game.distance)
     }
 
     /// Cheap fingerprint of the field: the count plus every position rounded to

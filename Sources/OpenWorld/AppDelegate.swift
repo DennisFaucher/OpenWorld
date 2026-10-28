@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let device = MTLCreateSystemDefaultDevice() else { fatalError("No Metal device available") }
         Save.enabled = true
         renderer = Renderer(device: device, save: Save.load())
-        renderer.game.onShard = { [weak self] _ in self?.saveProgress() }
+        renderer.game.onProgress = { [weak self] in self?.saveProgress() }
 
         let view = GameView(frame: NSRect(x: 0, y: 0, width: 1440, height: 900), device: device)
         view.input = renderer.input
