@@ -115,24 +115,44 @@ enum World {
 
     /// One drawable slice of the terrain: a range of indices into the shared
     /// vertex buffer, plus the box used to cull it.
+    /// One chunk carries three index ranges over the same vertices: full 1 m,
+    /// every other vertex (2 m) and every fourth (4 m). The coarse ranges
+    /// sample a subset of the fine ones, so all three draw the same heights and
+    /// the only thing that changes is how many of them get used.
     struct TerrainChunk {
         var firstIndex: Int
         var indexCount: Int
+        var coarseFirst: Int
+        var coarseCount: Int
+        var farFirst: Int
+        var farCount: Int
         var lo: V3
         var hi: V3
+    }
+
+    /// An island's whole patch. Every chunk in it is drawn at the same level,
+    /// because a chunk whose neighbour is at a different level shares an edge
+    /// at a different resolution: the coarse side is a straight line where the
+    /// fine side has a vertex, and the gap shows as a bright sliver. Level-of-
+    /// detail at patch granularity cannot crack, since a patch's only neighbour
+    /// is the flat sea floor at exactly `seabed`.
+    struct TerrainPatch {
+        var lo: V3
+        var hi: V3
+        var chunks: [TerrainChunk]
     }
 
     /// Chunks are cut on a fixed grid so a chunk's indices stay contiguous and
     /// a whole chunk can be skipped with one draw-range check.
     static let chunkSize: Float = 16
 
-    static func buildTerrain() -> (mesh: MeshBuilder, chunks: [TerrainChunk]) {
+    static func buildTerrain() -> (mesh: MeshBuilder, patches: [TerrainPatch]) {
         let b = MeshBuilder()
-        var chunks: [TerrainChunk] = []
+        var patches: [TerrainPatch] = []
         for island in islands {
-            addPatch(island.centre, radius: island.radius, cell: island.cell, to: b, chunks: &chunks)
+            patches.append(addPatch(island.centre, radius: island.radius, cell: island.cell, to: b))
         }
-        return (b, chunks)
+        return (b, patches)
     }
 
     /// Ground colour from height and slope. Shared by the island patches so the
@@ -154,33 +174,51 @@ enum World {
     /// coastline and end on a chunk boundary, so every chunk is a whole square
     /// and patches never leave a gap.
     private static func addPatch(_ centre: V2, radius: Float, cell: Float,
-                                 to b: MeshBuilder, chunks: inout [TerrainChunk]) {
+                                 to b: MeshBuilder) -> TerrainPatch {
         let half = (ceil((radius + 26) / chunkSize)) * chunkSize
         let cells = Int(half * 2 / cell)
         let stride = cells + 1
         let base = b.vertices.count
         let x0 = centre.x - half, z0 = centre.y - half
+        var patchLoY = Float.greatestFiniteMagnitude
+        var patchHiY = -Float.greatestFiniteMagnitude
         for j in 0...cells {
             let z = z0 + Float(j) * cell
             for i in 0...cells {
                 let x = x0 + Float(i) * cell
                 let h = height(x, z)
+                patchLoY = min(patchLoY, h)
+                patchHiY = max(patchHiY, h)
                 // Alpha 0.5 flags terrain for the fragment shader's detail.
                 b.add(V3(x, h, z), normal(x, z), ground(x, z, h, normal(x, z)), alpha: 0.5)
             }
         }
         let per = max(1, Int(chunkSize / cell))
+        var chunks: [TerrainChunk] = []
+
+        /// Appends one chunk's index range sampled every `step` cells.
+        func emit(_ step: Int, _ ci: Int, _ cj: Int) -> (Int, Int) {
+            let first = b.indices.count
+            let n = per / step
+            if n < 1 { return (first, 0) }
+            for j in 0..<n {
+                for i in 0..<n {
+                    let a = UInt32(base + (cj * per + j * step) * stride + (ci * per + i * step))
+                    let bb = a + UInt32(step)
+                    let c = a + UInt32(stride * step)
+                    let d = c + UInt32(step)
+                    b.tri(a, c, bb)
+                    b.tri(bb, c, d)
+                }
+            }
+            return (first, b.indices.count - first)
+        }
+
         for cj in 0..<(cells / per) {
             for ci in 0..<(cells / per) {
-                let first = b.indices.count
-                for j in (cj * per)..<((cj + 1) * per) {
-                    for i in (ci * per)..<((ci + 1) * per) {
-                        let a = UInt32(base + j * stride + i)
-                        let bb = a + 1, c = a + UInt32(stride), d = c + 1
-                        b.tri(a, c, bb)
-                        b.tri(bb, c, d)
-                    }
-                }
+                let fine = emit(1, ci, cj)
+                let coarse = emit(2, ci, cj)
+                let far = emit(4, ci, cj)
                 var loY = Float.greatestFiniteMagnitude
                 var hiY = -Float.greatestFiniteMagnitude
                 for j in (cj * per)...((cj + 1) * per) {
@@ -192,12 +230,16 @@ enum World {
                 }
                 let cx = x0 + Float(ci) * chunkSize
                 let cz = z0 + Float(cj) * chunkSize
-                chunks.append(TerrainChunk(firstIndex: first,
-                                           indexCount: b.indices.count - first,
+                chunks.append(TerrainChunk(firstIndex: fine.0, indexCount: fine.1,
+                                           coarseFirst: coarse.0, coarseCount: coarse.1,
+                                           farFirst: far.0, farCount: far.1,
                                            lo: V3(cx, loY, cz),
                                            hi: V3(cx + chunkSize, hiY, cz + chunkSize)))
             }
         }
+        return TerrainPatch(lo: V3(x0, patchLoY, z0),
+                            hi: V3(x0 + half * 2, patchHiY, z0 + half * 2),
+                            chunks: chunks)
     }
 
     /// The open sea floor: one flat sheet at seabed height with the island

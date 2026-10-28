@@ -155,7 +155,9 @@ if let i = args.firstIndex(of: "--shot"), i + 1 < args.count {
     renderer.renderPNG(path: args[i + 1], width: Int(size[0]), height: Int(size[1]))
     if args.contains("--stats") {
         let chunks = renderer.statsChunks, tris = renderer.statsTriangles
-        print("terrain: \(chunks)/\(renderer.terrainChunkTotal) chunks, "
+        let levels = renderer.statsLevels
+        print("terrain: \(chunks)/\(renderer.terrainChunkTotal) chunks "
+              + "(\(levels.0) full, \(levels.1) half, \(levels.2) quarter), "
               + "\(tris)/\(renderer.terrainTriangleTotal) triangles")
         print("props: \(renderer.statsPropBatches)/\(renderer.propBatchTotal) batches, "
               + "\(renderer.statsPropInstances)/\(renderer.propInstanceTotal) instances")

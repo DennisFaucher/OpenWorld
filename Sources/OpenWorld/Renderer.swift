@@ -46,6 +46,21 @@ struct InstancedBatch {
     let count: Int
     let lo: V3
     let hi: V3
+    /// Past this distance the batch is not worth drawing at all. A flower is
+    /// 0.28 m across, so beyond ~150 m it is a sub-pixel speck that still costs
+    /// its full 48 triangles.
+    let maxDistance: Float
+}
+
+extension InstancedBatch {
+    /// Distance to the batch box, not its centre: a batch the camera is inside
+    /// is always close.
+    func visibleFrom(_ cam: V3) -> Bool {
+        let dx = cam.x - min(max(cam.x, lo.x), hi.x)
+        let dy = cam.y - min(max(cam.y, lo.y), hi.y)
+        let dz = cam.z - min(max(cam.z, lo.z), hi.z)
+        return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance
+    }
 }
 
 final class Renderer: NSObject, MTKViewDelegate {
@@ -89,17 +104,21 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private let terrain: GPUMesh
     private let seaFloor: GPUMesh
-    private let terrainChunks: [World.TerrainChunk]
+    private let terrainPatches: [World.TerrainPatch]
     /// Terrain submitted in the last scene pass, for `--stats`.
     private(set) var statsChunks = 0
     private(set) var statsTriangles = 0
+    /// Chunks drawn at each level: full, half and quarter resolution.
+    private(set) var statsLevels = (0, 0, 0)
     private(set) var statsPropBatches = 0
     private(set) var statsPropInstances = 0
     var propBatchTotal: Int { propBatches.count }
     var propInstanceTotal: Int { propBatches.reduce(0) { $0 + $1.count } }
     /// Totals across every island, for `--stats`.
-    var terrainChunkTotal: Int { terrainChunks.count }
-    var terrainTriangleTotal: Int { terrainChunks.reduce(0) { $0 + $1.indexCount / 3 } }
+    var terrainChunkTotal: Int { terrainPatches.reduce(0) { $0 + $1.chunks.count } }
+    var terrainTriangleTotal: Int {
+        terrainPatches.reduce(0) { n, p in n + p.chunks.reduce(0) { $0 + $1.indexCount / 3 } }
+    }
     private let props: GPUMesh
     private let propBatches: [InstancedBatch]
     private let sphere: GPUMesh
@@ -244,7 +263,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let props = World.buildProps()
         let built = World.buildTerrain()
         terrain = GPUMesh(device: device, builder: built.mesh)
-        terrainChunks = built.chunks
+        terrainPatches = built.patches
         seaFloor = GPUMesh(device: device, builder: World.buildSeabed())
         self.props = GPUMesh(device: device, builder: props.mesh)
         // One base mesh per prop kind: three palm shapes (the seed only moves
@@ -277,8 +296,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             let buffer = device.makeBuffer(bytes: &gpu,
                                            length: MemoryLayout<GPUInstance>.stride * gpu.count,
                                            options: .storageModeShared)!
+            let maxDistance: Float
+            switch batch.kind {
+            case .palm: maxDistance = .greatestFiniteMagnitude
+            case .bush: maxDistance = 260
+            case .flower: maxDistance = 150
+            }
             return InstancedBatch(mesh: baseMesh(batch.kind), buffer: buffer,
-                                  count: gpu.count, lo: batch.lo, hi: batch.hi)
+                                  count: gpu.count, lo: batch.lo, hi: batch.hi,
+                                  maxDistance: maxDistance)
         }
         let unit = MeshBuilder()
         unit.sphere(center: .zero, radii: V3(repeating: 1), color: V3(repeating: 1), rings: 14, segs: 24)
@@ -552,10 +578,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(mainPSO)
         enc.setDepthStencilState(opaqueDepth)
         drawMesh(enc, seaFloor, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
-        drawTerrain(enc, viewProj: vp)
+        drawTerrain(enc, viewProj: vp, cam: game.camPos)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         enc.setRenderPipelineState(mainInstPSO)
-        drawProps(enc, viewProj: vp)
+        drawProps(enc, viewProj: vp, cam: game.camPos)
         enc.setRenderPipelineState(mainPSO)
         drawPlayer(enc)
 
@@ -719,10 +745,10 @@ final class Renderer: NSObject, MTKViewDelegate {
         )
         enc.setVertexBytes(&frame, length: MemoryLayout<FrameUniforms>.stride, index: 1)
 
-        drawTerrain(enc, viewProj: lightVP)
+        drawTerrain(enc, viewProj: lightVP, cam: game.pos)
         drawMesh(enc, props, model: matrix_identity_float4x4, tint: V4(1, 1, 1, 1))
         enc.setRenderPipelineState(shadowInstPSO)
-        drawProps(enc, viewProj: lightVP)
+        drawProps(enc, viewProj: lightVP, cam: game.pos)
         enc.setRenderPipelineState(shadowMapPSO)
         drawPlayer(enc)
 
@@ -733,32 +759,60 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// whole island, so most of it is behind the camera or past the far plane.
     /// The shadow pass writes these too, and runs first, so what is left when
     /// the frame ends is the scene pass — the one the camera decides.
-    private func drawTerrain(_ enc: MTLRenderCommandEncoder, viewProj: M4) {
+    private func drawTerrain(_ enc: MTLRenderCommandEncoder, viewProj: M4, cam: V3) {
         let frustum = Frustum(viewProj)
         statsChunks = 0
         statsTriangles = 0
+        statsLevels = (0, 0, 0)
         var obj = ObjUniforms(model: matrix_identity_float4x4,
                               normalMat: matrix_identity_float4x4,
                               tint: V4(1, 1, 1, 1))
         enc.setVertexBytes(&obj, length: MemoryLayout<ObjUniforms>.stride, index: 2)
         enc.setVertexBuffer(terrain.vertexBuffer, offset: 0, index: 0)
-        for c in terrainChunks where frustum.contains(c.lo, c.hi) {
-            statsChunks += 1
-            statsTriangles += c.indexCount / 3
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: c.indexCount,
-                                      indexType: .uint32, indexBuffer: terrain.indexBuffer,
-                                      indexBufferOffset: c.firstIndex * MemoryLayout<UInt32>.stride)
+        for patch in terrainPatches {
+            // One test per island before the per-chunk ones: whole islands fall
+            // outside the view often enough to be worth the early out.
+            guard frustum.contains(patch.lo, patch.hi) else { continue }
+            let level = terrainLevel(patch, cam)
+            for c in patch.chunks where frustum.contains(c.lo, c.hi) {
+                let first: Int, count: Int
+                switch level {
+                case 0: first = c.firstIndex; count = c.indexCount
+                case 1: first = c.coarseFirst; count = c.coarseCount
+                default: first = c.farFirst; count = c.farCount
+                }
+                guard count > 0 else { continue }
+                if level == 0 { statsLevels.0 += 1 } else if level == 1 { statsLevels.1 += 1 } else { statsLevels.2 += 1 }
+                statsChunks += 1
+                statsTriangles += count / 3
+                enc.drawIndexedPrimitives(type: .triangle, indexCount: count,
+                                          indexType: .uint32, indexBuffer: terrain.indexBuffer,
+                                          indexBufferOffset: first * MemoryLayout<UInt32>.stride)
+            }
         }
+    }
+
+    /// Which index set an island uses. Measured from the nearest point of the
+    /// patch box, so a patch the camera is standing on is always full detail
+    /// however far its centre is.
+    private func terrainLevel(_ patch: World.TerrainPatch, _ cam: V3) -> Int {
+        let nx = min(max(cam.x, patch.lo.x), patch.hi.x)
+        let nz = min(max(cam.z, patch.lo.z), patch.hi.z)
+        let dx = cam.x - nx, dz = cam.z - nz
+        let d = (dx * dx + dz * dz).squareRoot()
+        if d < 70 { return 0 }
+        if d < 190 { return 1 }
+        return 2
     }
 
     /// Props, one instanced draw per batch. The caller sets the pipeline; the
     /// batch box is tested against the same frustum as the terrain chunks, so an
     /// island off screen costs nothing at all.
-    private func drawProps(_ enc: MTLRenderCommandEncoder, viewProj: M4) {
+    private func drawProps(_ enc: MTLRenderCommandEncoder, viewProj: M4, cam: V3) {
         let frustum = Frustum(viewProj)
         statsPropBatches = 0
         statsPropInstances = 0
-        for batch in propBatches where frustum.contains(batch.lo, batch.hi) {
+        for batch in propBatches where frustum.contains(batch.lo, batch.hi) && batch.visibleFrom(cam) {
             statsPropBatches += 1
             statsPropInstances += batch.count
             enc.setVertexBuffer(batch.mesh.vertexBuffer, offset: 0, index: 0)
