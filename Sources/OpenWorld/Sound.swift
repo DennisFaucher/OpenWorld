@@ -191,7 +191,7 @@ enum Sound {
                 let low = body2.low(body1.low(w, 900), 340)
                 let deep = rumble.low(nz2.next(), 105)
                 let foam = bright.high(hiss.low(nz2.next(), 5200), 1700)
-                ch[c][i] = (low * 1.3 + deep * 0.8) * body + foam * 1.2 * spray
+                ch[c][i] = (low * 1.3 + deep * 0.8) * body + foam * 0.85 * spray
             }
         }
         let out = seamless(src, seconds: seconds, fade: fade)
@@ -218,7 +218,7 @@ enum Sound {
                 let w = nz.next()
                 let band = bandHi.low(w, 1100) - bandLo.low(w, 380)
                 let air = toneHi.high(whistle.low(nz.next(), 2600), 1900)
-                ch[c][i] = band * env * 0.9 + air * env * 0.4
+                ch[c][i] = band * env * 0.9 + air * env * 0.26
             }
         }
         let out = seamless(src, seconds: seconds, fade: fade)
@@ -366,6 +366,37 @@ enum Sound {
         return normalise(b, to: 0.6)
     }
 
+    /// A swimming stroke: one hand pulling through the water, so a band that
+    /// sweeps up as the hand catches and down as it releases, with a low gulp
+    /// behind it. Deep water is the only place `steps` stops advancing, so without
+    /// this the sea is all you hear while swimming.
+    static func stroke(variant: Int) -> AVAudioPCMBuffer {
+        let b = buffer(0.62)
+        let ch = b.floatChannelData!
+        let fs = Float(rate)
+        let v = variant % 2
+        let len: Float = v == 0 ? 0.55 : 0.62
+        let top: Float = v == 0 ? 1150 : 980
+        let gulpF: Float = v == 0 ? 190 : 230
+        for c in 0..<2 {
+            var nz = Noise(0xa31f &+ UInt32(v) &* 137 &+ UInt32(c) &* 13)
+            var body = Pole(), skirt = Pole()
+            for i in 0..<Int(b.frameLength) {
+                let t = Float(i) / fs
+                let u = min(t / len, 1)
+                // Zero at both ends, so a stroke can start on any frame.
+                let env = sin(powf(u, 0.75) * .pi)
+                let cut = 300 + top * sin(u * .pi)
+                let w = nz.next()
+                let band = body.low(w, cut) - skirt.low(w, cut * 0.32)
+                let boom = sin(2 * .pi * gulpF * t) * expf(-powf((u - 0.62) * 6, 2)) * 0.22
+                ch[c][i] = band * env * 1.6 + boom
+            }
+        }
+        highPass(b, 90)
+        return normalise(b, to: 0.5)
+    }
+
     /// Landing: the weight of a fall, which is mostly a short low thud.
     static func thud() -> AVAudioPCMBuffer {
         let b = buffer(0.32)
@@ -424,6 +455,7 @@ enum Sound {
             ("thud", thud(), false),
         ]
         for v in 0..<3 { out.append(("step\(v)", step(variant: v), false)) }
+        for v in 0..<2 { out.append(("stroke\(v)", stroke(variant: v), false)) }
         for v in 0..<2 { out.append(("bird\(v)", bird(variant: v), false)) }
         return out
     }

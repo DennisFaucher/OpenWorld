@@ -23,12 +23,14 @@ final class Audio {
     private let thudPlayer = AVAudioPlayerNode()
     private let stepPlayers: [AVAudioPlayerNode]
     private let birdPlayers: [AVAudioPlayerNode]
+    private let strokePlayers: [AVAudioPlayerNode]
 
     private let splashBuffer: AVAudioPCMBuffer
     private let chimeBuffer: AVAudioPCMBuffer
     private let thudBuffer: AVAudioPCMBuffer
     private let stepBuffers: [AVAudioPCMBuffer]
     private let birdBuffers: [AVAudioPCMBuffer]
+    private let strokeBuffers: [AVAudioPCMBuffer]
 
     /// Smoothed levels: a target that steps would be a click every time the
     /// player crossed the waterline.
@@ -40,6 +42,7 @@ final class Audio {
     private var wetness: Float = 0
 
     private var lastSteps = 0
+    private var lastStride = 0
     private var lastFound = 0
     private var wasSwimming = false
     private var wasGrounded = true
@@ -47,7 +50,11 @@ final class Audio {
     private var nextBird: Float = 5
     private var stepCursor = 0
     private var birdCursor = 0
+    private var strokeCursor = 0
     private var primed = false
+    /// Counted for `--audio-test`: a one-shot that never fires would otherwise be
+    /// invisible.
+    private(set) var strokesPlayed = 0
 
     private var captureURL: URL?
     private var captureSamples: [[Float]] = [[], []]
@@ -88,17 +95,19 @@ final class Audio {
     init?() {
         stepBuffers = (0..<3).map { Sound.step(variant: $0) }
         birdBuffers = (0..<2).map { Sound.bird(variant: $0) }
+        strokeBuffers = (0..<2).map { Sound.stroke(variant: $0) }
         splashBuffer = Sound.splash()
         chimeBuffer = Sound.chime()
         thudBuffer = Sound.thud()
         stepPlayers = (0..<3).map { _ in AVAudioPlayerNode() }
         birdPlayers = (0..<2).map { _ in AVAudioPlayerNode() }
+        strokePlayers = (0..<2).map { _ in AVAudioPlayerNode() }
 
         let fmt = Sound.format
         engine.attach(bus)
         let throughBus: [AVAudioNode] = [surfPlayer, windPlayer, jetPlayer,
                                          splashPlayer, chimePlayer, thudPlayer]
-            + stepPlayers + birdPlayers
+            + stepPlayers + birdPlayers + strokePlayers
         for node in throughBus + [motorPlayer, motorPitch, muffle] {
             engine.attach(node)
         }
@@ -153,6 +162,7 @@ final class Audio {
             // The first frame is a snapshot, not a burst of events: launching
             // into a saved game must not chime for every crystal already found.
             lastSteps = g.steps
+            lastStride = Int(g.walkPhase / Float.pi)
             lastFound = g.found.count
             wasSwimming = g.swimming
             wasGrounded = g.onGround
@@ -166,15 +176,27 @@ final class Audio {
             for _ in 0..<min(3, g.steps - lastSteps) {
                 let p = stepPlayers[stepCursor % stepPlayers.count]
                 if g.swimming {
-                    play(p, splashBuffer, volume: Float.random(in: 0.14...0.2))
+                    play(p, splashBuffer, volume: Float.random(in: 0.22...0.3))
                 } else {
                     play(p, stepBuffers[stepCursor % stepBuffers.count],
-                         volume: Float.random(in: 0.3...0.42))
+                         volume: Float.random(in: 0.45...0.62))
                 }
                 stepCursor += 1
             }
             lastSteps = g.steps
         }
+
+        // Deep water is the one place the step counter stops, so a stroke comes
+        // off the walk phase itself — the same phase the legs kick on.
+        let stride = Int(g.walkPhase / Float.pi)
+        if g.swimming && stride != lastStride && g.speedNorm > 0.06 {
+            play(strokePlayers[strokeCursor % strokePlayers.count],
+                 strokeBuffers[strokeCursor % strokeBuffers.count],
+                 volume: 0.38 + 0.22 * min(1, g.speedNorm))
+            strokeCursor += 1
+            strokesPlayed += 1
+        }
+        lastStride = stride
 
         if g.found.count > lastFound {
             play(chimePlayer, chimeBuffer, volume: 0.7)
@@ -182,20 +204,20 @@ final class Audio {
         }
 
         if g.swimming && !wasSwimming {
-            play(splashPlayer, splashBuffer, volume: 0.65)
+            play(splashPlayer, splashBuffer, volume: 0.7)
         }
 
         // Landing is weighted by the speed the frame before contact, so a hop
         // onto a plank and a drop off the mountain are the same sound at two
         // volumes.
         if g.onGround && !wasGrounded, lastFallSpeed < -3 {
-            play(thudPlayer, thudBuffer, volume: 0.22 + 0.4 * clampf(-lastFallSpeed / 20, 0, 1))
+            play(thudPlayer, thudBuffer, volume: 0.3 + 0.45 * clampf(-lastFallSpeed / 20, 0, 1))
         }
 
         // The jet hisses while the stream is live and dies with the tank. Aiming
         // at the sky still makes noise: `spraying` is already the gate, and the
         // stream itself does not care whether it hit anything.
-        jetLevel = ease(jetLevel, g.spraying ? 0.5 : 0, 14, dt)
+        jetLevel = ease(jetLevel, g.spraying ? 0.45 : 0, 14, dt)
         jetPlayer.volume = jetLevel
 
         // The outboard.
@@ -211,8 +233,12 @@ final class Audio {
         // The sea is loudest from the shore and the wind from the ridge, so the
         // bed tracks the terrain the player is standing on.
         let ground = World.height(g.pos.x, g.pos.z)
-        surfLevel = ease(surfLevel, 0.18 + 0.5 * (1 - sstep(1.5, 26, ground)), 1.6, dt)
-        windLevel = ease(windLevel, 0.05 + 0.26 * sstep(2, 26, ground), 1.0, dt)
+        // The bed sits *under* the foley, not over it: at the first pass the
+        // surf masked the footsteps and the wading splashes completely, because a
+        // continuous noise bed only has to be half as loud as a transient to bury
+        // it.
+        surfLevel = ease(surfLevel, 0.10 + 0.32 * (1 - sstep(1.5, 26, ground)), 1.6, dt)
+        windLevel = ease(windLevel, 0.04 + 0.18 * sstep(2, 26, ground), 1.0, dt)
         surfPlayer.volume = surfLevel
         windPlayer.volume = windLevel
 

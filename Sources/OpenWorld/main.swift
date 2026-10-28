@@ -102,7 +102,7 @@ if args.contains("--audio-scan") || args.contains("--audio-dump") {
     }
     for (name, buf, loop) in Sound.all() {
         let s = Sound.stats(buf, loop: loop)
-        let label = name.padding(toLength: 6, withPad: " ", startingAt: 0)
+        let label = name.padding(toLength: 7, withPad: " ", startingAt: 0)
         let seam = loop ? String(format: "  seam %.2f", s.seam) : ""
         print(String(format: "%@ %5.2fs  peak %.3f  rms %.3f%@",
                      label, Double(buf.frameLength) / Sound.rate, s.peak, s.rms, seam))
@@ -191,7 +191,6 @@ if args.contains("--audio-test") {
     game.pos = V3(62, Game.swimY, 62)
     game.camPitch = -0.30
     game.camDist = 5
-    input.keys.remove(Key.w)
     run(1.5)
     let waterURL = URL(fileURLWithPath: dir).appendingPathComponent("mix-water.caf")
     guard audio.startCapture(to: waterURL) else {
@@ -246,6 +245,10 @@ if args.contains("--audio-test") {
     }
     if audio.levels.motor <= 0.2 {
         print("FAIL: the outboard is not playing")
+        exit(1)
+    }
+    if audio.strokesPlayed <= 0 {
+        print("FAIL: no swimming strokes (the water is silent while moving)")
         exit(1)
     }
     print("ok: \(dir)")
