@@ -70,6 +70,9 @@ enum Shards {
                 if World.pierHeight(x, z) > 0 { continue }
                 if obstacleDistance(V2(x, z), obstacles) < clearance { continue }
                 if length(V2(x, z) - V2(Game.spawn.x, Game.spawn.z)) < 6 { continue }
+                // Never beyond the wall the player is clamped to: a shard out
+                // there is visible, glinting, and untouchable.
+                if length(V2(x, z)) > World.boundsRadius - 6 { continue }
                 let p = V3(x, h, z)
                 if placed.contains(where: { length($0 - p) < spacing }) { continue }
                 placed.append(p)

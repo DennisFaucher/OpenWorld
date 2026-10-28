@@ -77,11 +77,17 @@ if args.contains("--villager-scan") {
 /// position is picked without running around the archipelago.
 if args.contains("--shard-scan") {
     let field = Shards.field(obstacles: World.buildProps().obstacles)
-    print("shards: \(field.count)  layout \(Save.layoutHash(field))")
+    print("shards: \(field.count)  layout \(Save.layoutHash(field))  wall \(World.boundsRadius)")
+    var walled = 0
     for (i, s) in field.enumerated() {
         let deg = acos(clampf(World.normal(s.pos.x, s.pos.z).y, -1, 1)) * 180 / Float.pi
-        print(String(format: "%3d  x %7.2f  z %7.2f  y %5.2f  slope %4.1f", i, s.pos.x, s.pos.z, s.pos.y, deg))
+        let r = length(V2(s.pos.x, s.pos.z))
+        let over = r > World.boundsRadius - Game.playerRadius
+        if over { walled += 1 }
+        print(String(format: "%3d  x %7.2f  z %7.2f  y %5.2f  slope %4.1f  r %6.1f%@",
+                     i, s.pos.x, s.pos.z, s.pos.y, deg, r, over ? "  WALLED" : ""))
     }
+    if walled > 0 { print("WARNING: \(walled) shard(s) out of reach") }
     exit(0)
 }
 

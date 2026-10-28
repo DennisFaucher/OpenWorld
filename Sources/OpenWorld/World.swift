@@ -47,14 +47,20 @@ struct Island {
 enum World {
     /// Half-size of the world, in world units. Covers every island and a little
     /// open water around them.
-    static let extent: Float = 340
+    /// How far the sea floor and the shore-depth texture reach. It has to be
+    /// wider than `boundsRadius`, or the player can swim off the drawn world.
+    static let extent: Float = 420
     static let waterLevel: Float = 0
     static let seabed: Float = -4
     static let plazaCenter = V2(-18, 22)
     static let plazaRadius: Float = 13
     static let plazaHeight: Float = 3.2
-    /// Players can't swim farther than this from the origin.
-    static let boundsRadius: Float = 320
+    /// Players can't swim farther than this from the origin. Derived from the
+    /// islands, never chosen: a hard-coded 320 was five metres inside the
+    /// north-east island's beach, which walled off three of its crystals with
+    /// nothing to see or hit — you bounced off the air trying to reach a gem.
+    static let boundsRadius: Float =
+        min(extent - 8, islands.map { length($0.centre) + $0.radius }.max()! + 40)
 
     static let islands: [Island] = [
         Island(centre: V2(0, 0), radius: 72, peak: 20, seed: 0, cell: 1, home: true),

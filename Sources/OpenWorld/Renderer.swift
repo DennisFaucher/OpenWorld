@@ -338,8 +338,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let v = argValues("--yaw", 1) { game.camYaw = v[0] }
         }
 
-        // Height map for shoreline depth in the water shader.
-        let size = 512
+        // Height map for shoreline depth in the water shader. 640 over the wider
+        // extent keeps the same ~1.3 m per texel as the old 512 over 340.
+        let size = 640
         let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: size, height: size, mipmapped: false)
         td.usage = .shaderRead
         heightTexture = device.makeTexture(descriptor: td)!
