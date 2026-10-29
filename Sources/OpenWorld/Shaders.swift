@@ -859,16 +859,25 @@ enum Shaders {
         // ground would work too, but the camera looks *at* the player, so that
         // spot sits behind the character every single time.
         //
-        // It appears with the stream, not permanently: a ring that is always on
-        // screen sits around whatever you happen to be looking at, and on a
-        // distant gem that reads as a force field.
+        // A faint ring while the jet is only pointed, bright once it is running:
+        // always-on at full strength sat around whatever you happened to be
+        // looking at, and on a distant gem that read as a force field, but
+        // hiding it entirely until the trigger went down lost the one thing it is
+        // for — knowing where the water will land before you commit.
         if (gauge.z > 0.01) {
             float2 mid = res * 0.5;
             float d = length(p - mid);
-            float ring = smoothstep(1.7 * sc, 0.7 * sc, abs(d - 8.0 * sc));
-            float pip = smoothstep(2.0 * sc, 0.8 * sc, d);
             float k = saturate(gauge.z);
-            c = mix(c, float3(0.96, 1.0, 1.0), (ring * 0.40 + pip * 0.55) * k);
+            // Every mark is a dark ring with a light one inside it. A white ring
+            // alone was invisible against sunlit sand and the sky, which is most
+            // of what this island is, so the marker has to carry its own outline
+            // to read on the water as well as on the ground.
+            float ringDark = smoothstep(2.2 * sc, 1.1 * sc, abs(d - 9.2 * sc));
+            float ringLit  = smoothstep(1.6 * sc, 0.7 * sc, abs(d - 8.3 * sc));
+            float pipDark  = smoothstep(2.9 * sc, 1.8 * sc, d);
+            float pipLit   = smoothstep(1.8 * sc, 0.9 * sc, d);
+            c = mix(c, float3(0.03, 0.05, 0.08), (ringDark * 0.46 + pipDark * 0.46) * k);
+            c = mix(c, float3(0.98, 1.0, 1.0), (ringLit * 0.86 + pipLit * 0.96) * k);
         }
         return float4(c, 1.0);
     }
